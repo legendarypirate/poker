@@ -96,10 +96,72 @@ function cancelAutoStart(roomId, rooms) {
   }
 }
 
+/**
+ * Start timer to check if only one player remains (60 seconds = winner)
+ */
+function startSinglePlayerWinnerTimer(roomId, rooms, onSinglePlayerWinner) {
+  const room = rooms[roomId];
+  if (!room) return;
+  
+  // Clear any existing timer
+  if (room.singlePlayerTimer) {
+    clearTimeout(room.singlePlayerTimer);
+  }
+
+  // Start 60 second timer
+  room.singlePlayerTimer = setTimeout(() => {
+    if (!rooms[roomId]) return;
+    
+    const connectedPlayers = room.players.filter(p => p.ws && p.ws.readyState === 1);
+    
+    if (connectedPlayers.length === 1 && room.gameStarted && !room.gameFinished) {
+      console.log(`🏆 Only one player left in room ${roomId} for 60 seconds - declaring winner`);
+      onSinglePlayerWinner(roomId, connectedPlayers[0]);
+    }
+    
+    room.singlePlayerTimer = null;
+  }, 60000); // 60 seconds
+}
+
+/**
+ * Clear single player winner timer
+ */
+function clearSinglePlayerWinnerTimer(roomId, rooms) {
+  const room = rooms[roomId];
+  if (room && room.singlePlayerTimer) {
+    clearTimeout(room.singlePlayerTimer);
+    room.singlePlayerTimer = null;
+  }
+}
+
+/**
+ * Reset single player winner timer (call when player count changes)
+ */
+function resetSinglePlayerWinnerTimer(roomId, rooms, onSinglePlayerWinner) {
+  const room = rooms[roomId];
+  if (!room || !room.gameStarted || room.gameFinished) {
+    clearSinglePlayerWinnerTimer(roomId, rooms);
+    return;
+  }
+  
+  const connectedPlayers = room.players.filter(p => p.ws && p.ws.readyState === 1);
+  
+  if (connectedPlayers.length === 1) {
+    // Only one player connected, start timer
+    startSinglePlayerWinnerTimer(roomId, rooms, onSinglePlayerWinner);
+  } else {
+    // More than one player, clear timer
+    clearSinglePlayerWinnerTimer(roomId, rooms);
+  }
+}
+
 module.exports = {
   startTurnTimer,
   clearTurnTimer,
   startAutoStartCountdown,
-  cancelAutoStart
+  cancelAutoStart,
+  startSinglePlayerWinnerTimer,
+  clearSinglePlayerWinnerTimer,
+  resetSinglePlayerWinnerTimer
 };
 

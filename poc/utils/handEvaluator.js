@@ -128,16 +128,26 @@ function evaluateFiveCardHand(cards) {
   }
   
   if (isStraight) {
-    // For special straights, use appropriate high card value
-    let highCardValue = cardValue(sortedCards[4].rank);
-    // A-2-3-4-5 should be treated as low straight (value based on 5)
-    if (sortedCards[0].rank === 'A' && sortedCards[1].rank === '2') {
-      highCardValue = cardValue('5');
+    // Calculate straight value based on the highest card in the straight
+    // Order: A-2-3-4-5 (lowest, value 5) < 2-3-4-5-6 (value 6) < ... < 10-J-Q-K-A (highest, value 14)
+    let highCardValue;
+    
+    // Check for A-2-3-4-5 (wheel - lowest straight)
+    const ranks = sortedCards.map(c => c.rank);
+    if (ranks.includes('A') && ranks.includes('2') && ranks.includes('3') && 
+        ranks.includes('4') && ranks.includes('5') && !ranks.includes('6')) {
+      highCardValue = cardValue('5'); // A-2-3-4-5 is valued at 5 (lowest)
+    } 
+    // Check for 10-J-Q-K-A (highest straight)
+    else if (ranks.includes('10') && ranks.includes('J') && ranks.includes('Q') && 
+             ranks.includes('K') && ranks.includes('A') && !ranks.includes('2')) {
+      highCardValue = cardValue('A'); // 10-J-Q-K-A is valued at A (14, highest)
     }
-    // 2-3-4-5-6 should use 6 as high card
-    if (sortedCards[0].rank === '2' && sortedCards[4].rank === '6') {
-      highCardValue = cardValue('6');
+    // For all other straights, use the highest card in the straight
+    else {
+      highCardValue = cardValue(sortedCards[4].rank);
     }
+    
     return { rank: 'Straight', value: 500 + highCardValue, cards: cards };
   }
   
@@ -239,9 +249,21 @@ function canPlayCards(playedCards, lastPlay) {
     return false;
   }
   
-  // Compare hand values (now includes suit consideration)
-  console.log(`🔍 Comparing hands: Played=${playedHand.value}, Last=${lastHand.value}`);
-  return playedHand.value > lastHand.value;
+  // Compare hand values
+  // Hand value hierarchy (for 5-card hands):
+  // RoyalFlush: 1000
+  // StraightFlush: 900+
+  // FourOfAKind: 800+
+  // FullHouse: 700+
+  // Flush: 600+
+  // Straight: 500+
+  // Higher value always beats lower value
+  console.log(`🔍 Comparing hands: Played=${playedHand.rank} (${playedHand.value}) vs Last=${lastHand.rank} (${lastHand.value})`);
+  const canBeat = playedHand.value > lastHand.value;
+  if (!canBeat) {
+    console.log(`❌ Cannot beat: ${playedHand.rank} (${playedHand.value}) <= ${lastHand.rank} (${lastHand.value})`);
+  }
+  return canBeat;
 }
 
 module.exports = {

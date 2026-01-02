@@ -7,10 +7,24 @@ const axios = require("axios");
 
 // Register a new user
 exports.register = async (req, res) => {
-  const { username, password, role } = req.body;
+  const { username, password, passwordConfirm, role } = req.body;
 
   if (!username || !password) {
     return res.status(400).json({ message: "Username and password are required!" });
+  }
+
+  // Validate password confirmation
+  if (!passwordConfirm) {
+    return res.status(400).json({ message: "Password confirmation is required!" });
+  }
+
+  if (password !== passwordConfirm) {
+    return res.status(400).json({ message: "Passwords do not match!" });
+  }
+
+  // Validate password length
+  if (password.length < 6) {
+    return res.status(400).json({ message: "Password must be at least 6 characters long!" });
   }
 
   try {
@@ -521,6 +535,50 @@ exports.socialLogin = async (req, res) => {
     });
   } catch (err) {
     console.error("Error in social login:", err);
+    res.status(500).json({ 
+      success: false,
+      message: "Internal server error",
+      error: err.message 
+    });
+  }
+};
+
+// Get current user info (requires authentication)
+exports.getCurrentUser = async (req, res) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ 
+        success: false,
+        message: "User not authenticated" 
+      });
+    }
+
+    const user = await User.findByPk(userId, {
+      attributes: ['id', 'username', 'email', 'account_balance', 'display_name', 'avatar_url', 'role']
+    });
+
+    if (!user) {
+      return res.status(404).json({ 
+        success: false,
+        message: "User not found" 
+      });
+    }
+
+    res.json({
+      success: true,
+      user: {
+        id: user.id,
+        username: user.username,
+        email: user.email,
+        account_balance: parseFloat(user.account_balance || 0),
+        display_name: user.display_name,
+        avatar_url: user.avatar_url,
+        role: user.role
+      }
+    });
+  } catch (err) {
+    console.error("Error getting current user:", err);
     res.status(500).json({ 
       success: false,
       message: "Internal server error",

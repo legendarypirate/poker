@@ -35,7 +35,7 @@ interface WithdrawalRequest {
   };
   username?: string; // From user relation
   amount: number;
-  status: string; // 'pending' | 'approved' | 'rejected' | 'completed'
+  status: string | number; // 'pending' | 'approved' | 'rejected' | 'completed' | 0 | 1 | 2
   bank_name: string;
   bank_account: string;
   account_number?: string; // Alias for bank_account

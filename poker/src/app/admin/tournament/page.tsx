@@ -320,7 +320,10 @@ export default function TournamentPage() {
               style={{ width: '100%' }}
               min={0}
               formatter={(value) => `₮ ${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
-              parser={(value) => value!.replace(/₮\s?|(,*)/g, '')}
+              parser={((value: string | undefined) => {
+                const num = parseFloat(value!.replace(/₮\s?|(,*)/g, ''));
+                return isNaN(num) ? 0 : num;
+              }) as any}
             />
           </Form.Item>
           <Form.Item 
@@ -333,7 +336,10 @@ export default function TournamentPage() {
               style={{ width: '100%' }}
               min={0}
               formatter={(value) => `₮ ${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
-              parser={(value) => value!.replace(/₮\s?|(,*)/g, '')}
+              parser={((value: string | undefined) => {
+                const num = parseFloat(value!.replace(/₮\s?|(,*)/g, ''));
+                return isNaN(num) ? 0 : num;
+              }) as any}
             />
           </Form.Item>
           <Form.Item 

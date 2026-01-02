@@ -54,6 +54,29 @@ function calculateRoundPoints(roomId, winnerId, rooms) {
   return points;
 }
 
+/**
+ * Check if a player has all 13 cards of a suit (3, 4, 5, 6, 7, 8, 9, 10, J, Q, K, A, 2)
+ * @param {Array} hand - The player's hand
+ * @returns {Object|null} - Returns {suit, playerId} if found, null otherwise
+ */
+function checkCompleteSuit(hand) {
+  const requiredRanks = ["3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A", "2"];
+  const suits = ["♠", "♥", "♦", "♣"];
+  
+  for (let suit of suits) {
+    const suitCards = hand.filter(card => card.suit === suit);
+    if (suitCards.length === 13) {
+      // Check if all required ranks are present
+      const ranks = suitCards.map(card => card.rank);
+      const hasAllRanks = requiredRanks.every(rank => ranks.includes(rank));
+      if (hasAllRanks) {
+        return { suit, ranks };
+      }
+    }
+  }
+  return null;
+}
+
 function dealCards(roomId, rooms, startTurnTimerFn, broadcastToRoomFn, firstPlayerId = null) {
   const room = rooms[roomId];
   const numPlayers = room.players.length;
@@ -83,7 +106,124 @@ function dealCards(roomId, rooms, startTurnTimerFn, broadcastToRoomFn, firstPlay
     }
   }
 
-  // Set current player index to winner if provided, otherwise start with player 0
+  // Check for complete suit (all 13 cards of a suit) - auto win game
+  for (let player of room.players) {
+    const completeSuit = checkCompleteSuit(player.hand);
+    if (completeSuit) {
+      console.log(`🎉 Player ${player.playerId} has complete suit ${completeSuit.suit} - AUTO WIN GAME!`);
+      
+      // Mark game as finished
+      room.gameFinished = true;
+      room.processingRoundEnd = true;
+      
+      // Set all other players to have maximum points (eliminated)
+      room.playerPoints = room.playerPoints || {};
+      for (let p of room.players) {
+        if (p.playerId !== player.playerId) {
+          room.playerPoints[p.playerId] = 30; // Set to elimination threshold
+        } else {
+          room.playerPoints[p.playerId] = 0; // Winner gets 0 points
+        }
+      }
+      
+      // Broadcast game over immediately
+      setTimeout(() => {
+        const winnerUserId = player.userId;
+        const winnerPlayerId = player.playerId;
+        
+        handleGameFinish(roomId, room, winnerUserId, winnerPlayerId).catch(err => {
+          console.error("Error handling game finish:", err);
+        });
+        
+        // Check if this is a tournament match
+        if (room.tournamentId) {
+          const { handleMatchCompletion } = require('../websocket/tournamentHandler');
+          handleMatchCompletion(room.tournamentId, roomId, winnerUserId || winnerPlayerId).catch(err => {
+            console.error("Error handling tournament match completion:", err);
+          });
+        }
+        
+        // Save user statistics
+        saveUserStatistics(room, winnerPlayerId, rooms).catch(err => {
+          console.error("Error saving user statistics:", err);
+        });
+        
+        // Clear player states
+        const { clearPlayerState } = require('../websocket/disconnectHandler');
+        for (const p of room.players) {
+          if (p.userId && room.gameId) {
+            clearPlayerState(p.userId, room.gameId).catch(err => {
+              console.error(`Error clearing player state for user ${p.userId}:`, err);
+            });
+          }
+        }
+        
+        broadcastToRoomFn(roomId, {
+          type: 'gameOver',
+          winner: winnerPlayerId,
+          points: room.playerPoints,
+          eliminatedPlayers: room.players.filter(p => p.playerId !== winnerPlayerId).map(p => p.playerId),
+          completeSuitWin: true,
+          winningSuit: completeSuit.suit,
+          isTournament: !!room.tournamentId,
+          tournamentId: room.tournamentId
+        });
+        
+        // Reset after game
+        setTimeout(() => {
+          room.playerPoints = {};
+          room.lastPlay = null;
+          room.passCount = 0;
+          room.currentPlayerIndex = 0;
+          room.players.forEach(p => p.hand = []);
+          room.processingRoundEnd = false;
+        }, 5000);
+      }, 1000);
+      
+      return; // Don't continue with normal game flow
+    }
+  }
+
+  // Find player with lowest card to start first
+  // Priority: 3♦ < 3♣ < 3♥ < 3♠ < absolute lowest card
+  let playerWithLowestCard = null;
+  let lowestCard = null;
+  
+  if (firstPlayerId === null) {
+    const { compareCards } = require('./cardUtils');
+    const suitOrder = ['♦', '♣', '♥', '♠']; // Lowest to highest suit
+    
+    // First, check for 3s in suit order (3♦, 3♣, 3♥, 3♠)
+    for (let suit of suitOrder) {
+      for (let player of room.players) {
+        const threeCard = player.hand.find(card => card.rank === "3" && card.suit === suit);
+        if (threeCard) {
+          playerWithLowestCard = player;
+          lowestCard = threeCard;
+          console.log(`🎯 Found player ${player.playerId} with 3 of ${suit}`);
+          break;
+        }
+      }
+      if (playerWithLowestCard) break; // Found a 3, stop searching
+    }
+    
+    // If no one has any 3, find the absolute lowest card across all players
+    if (!playerWithLowestCard) {
+      for (let player of room.players) {
+        for (let card of player.hand) {
+          if (lowestCard === null || compareCards(card, lowestCard) < 0) {
+            lowestCard = card;
+            playerWithLowestCard = player;
+          }
+        }
+      }
+      if (playerWithLowestCard) {
+        console.log(`🎯 Found lowest card: ${lowestCard.rank}${lowestCard.suit} - Player ${playerWithLowestCard.playerId} will start`);
+      }
+    }
+  }
+
+  // Set current player index to winner if provided, or player with lowest card, otherwise start with player 0
   if (firstPlayerId !== null) {
     const winnerIndex = room.players.findIndex(p => p.playerId === firstPlayerId);
     if (winnerIndex !== -1) {
@@ -93,8 +233,13 @@ function dealCards(roomId, rooms, startTurnTimerFn, broadcastToRoomFn, firstPlay
       room.currentPlayerIndex = 0;
       console.log(`⚠️ Winner ${firstPlayerId} not found, starting with player 0`);
     }
+  } else if (playerWithLowestCard) {
+    const lowestCardIndex = room.players.findIndex(p => p.playerId === playerWithLowestCard.playerId);
+    room.currentPlayerIndex = lowestCardIndex;
+    console.log(`🎯 Setting first player to ${playerWithLowestCard.playerId} (index ${lowestCardIndex}) - has lowest card ${lowestCard.rank}${lowestCard.suit}`);
   } else {
     room.currentPlayerIndex = 0;
+    console.log(`⚠️ No player found with any card, starting with player 0`);
   }
   
   room.lastPlay = null;
@@ -298,6 +443,18 @@ async function handleGameFinish(roomId, room, winnerUserId, winnerPlayerId) {
     const game = await db.games.findByPk(gameId);
     if (!game) {
       console.log(`⚠️ Game ${gameId} not found`);
+      return;
+    }
+
+    // Check if all players left - don't reduce balance in this case
+    if (room.allPlayersLeft) {
+      console.log(`💰 Skipping balance reduction for game ${gameId} - all players left`);
+      // Still update game status
+      await game.update({
+        status: 2, // 2 = finished
+        end_time: new Date(),
+        winner: winnerUserId
+      });
       return;
     }
 

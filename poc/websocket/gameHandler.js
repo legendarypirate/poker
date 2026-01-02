@@ -1,7 +1,7 @@
 const { evaluateHand, canPlayCards } = require('../utils/handEvaluator');
 const { removeCardsFromHand } = require('../utils/cardUtils');
 const { dealCards, checkRoundOver } = require('../utils/gameLogic');
-const { startTurnTimer, clearTurnTimer, startAutoStartCountdown, cancelAutoStart } = require('./timerUtils');
+const { startTurnTimer, clearTurnTimer, startAutoStartCountdown, cancelAutoStart, resetSinglePlayerWinnerTimer, clearSinglePlayerWinnerTimer } = require('./timerUtils');
 const { getUserChat } = require('./adminHandler');
 const { 
   handlePlayerDisconnect: handleDisconnectTimer, 
@@ -26,19 +26,37 @@ function broadcastToRoom(roomId, message, rooms) {
   });
 }
 
-function broadcastPlayerCount(roomId, rooms) {
+function broadcastPlayerCount(roomId, rooms, wss = null) {
   const room = rooms[roomId];
   if (!room) return;
   const count = room.players.length;
+  
+  // Use original room ID for client display
+  const displayRoomId = room.originalRoomId || roomId.replace(/_\d+k$/, '');
 
   const message = {
     type: "playerCount",
-    roomId,
+    roomId: displayRoomId, // Send original room ID to client
     players: count,
     maxPlayers: 4,
   };
 
+  // Broadcast to players in the room
   broadcastToRoom(roomId, message, rooms);
+  
+  // Also broadcast to all connected clients (for room selection screens)
+  // This ensures room count updates are visible even when not in the room
+  if (wss) {
+    wss.clients.forEach((client) => {
+      if (client.readyState === 1) { // WebSocket.OPEN
+        try {
+          client.send(JSON.stringify(message));
+        } catch (e) {
+          console.error('Error broadcasting player count:', e);
+        }
+      }
+    });
+  }
 }
 
 function autoPass(roomId, rooms, broadcastToRoom, startTurnTimerFn) {
@@ -128,8 +146,12 @@ async function startGame(roomId, rooms, roomReadyStatus, broadcastToRoomFn, star
   
   // Create game record in database
   try {
-    const roomNumber = parseInt(roomId.replace(/\D/g, '')) || parseInt(roomId.replace('room_', '')) || 1;
+    // Extract room number from original room ID (not composite key)
+    const originalRoomId = room.originalRoomId || roomId.replace(/_\d+k$/, '');
+    const roomNumber = parseInt(originalRoomId.replace(/\D/g, '')) || parseInt(originalRoomId.replace('room_', '')) || 1;
     const playerUserIds = room.players.map(p => p.userId).filter(Boolean);
+    
+    console.log(`💾 Creating game record: roomNumber=${roomNumber}, buyIn=${room.buyIn}, players=${playerUserIds.length}`);
     
     const gameRecord = await db.games.create({
       room_id: roomNumber,
@@ -163,19 +185,89 @@ async function startGame(roomId, rooms, roomReadyStatus, broadcastToRoomFn, star
   
   // Mark game as started
   room.gameStarted = true;
+  room.gameFinished = false; // Reset finished flag when starting new game
+  room.allPlayersLeft = false; // Reset flag for balance reduction check
   
   cancelAutoStart(roomId, rooms);
+  
+  // Initialize single player winner timer (will start if only one player remains)
+  const { resetSinglePlayerWinnerTimer } = require('./timerUtils');
+  resetSinglePlayerWinnerTimer(roomId, rooms, (roomId, winnerPlayer) => {
+    handleSinglePlayerWinner(roomId, winnerPlayer, rooms, broadcastToRoomFn);
+  });
+  
   dealCards(roomId, rooms, startTurnTimerFn, broadcastToRoomFn);
   
   console.log(`🚀 Game started in room ${roomId}`);
+}
+
+/**
+ * Handle single player winner (only one player left for 60 seconds)
+ * This function is called by the timer, so it needs to access rooms and broadcastToRoom
+ */
+async function handleSinglePlayerWinner(roomId, winnerPlayer, rooms, broadcastToRoom) {
+  const room = rooms[roomId];
+  if (!room || !room.gameStarted || room.gameFinished) return;
+  
+  console.log(`🏆 Declaring ${winnerPlayer.playerId} (${winnerPlayer.username}) as winner - only player left for 60 seconds`);
+  
+  // Mark game as finished
+  room.gameFinished = true;
+  
+  // Convert playerId to userId for winner
+  const winnerUserId = winnerPlayer.userId;
+  const winnerPlayerId = winnerPlayer.playerId;
+  
+  // Handle game finish (this will reduce balance unless all players left)
+  const { handleGameFinish } = require('../utils/gameLogic');
+  await handleGameFinish(roomId, room, winnerUserId, winnerPlayerId).catch(err => {
+    console.error("Error handling single player winner:", err);
+  });
+  
+  // Clear player states for all players
+  const { clearPlayerState } = require('./disconnectHandler');
+  const gameId = room.gameId || getRoomGameId(roomId);
+  if (gameId) {
+    for (const player of room.players) {
+      if (player.userId) {
+        await clearPlayerState(player.userId, gameId).catch(err => {
+          console.error(`Error clearing player state for user ${player.userId}:`, err);
+        });
+      }
+    }
+  }
+  
+  // Broadcast game over
+  broadcastToRoom(roomId, {
+    type: 'gameOver',
+    winner: winnerPlayerId,
+    points: room.playerPoints || {},
+    eliminatedPlayers: [],
+    singlePlayerWinner: true
+  }, rooms);
+  
+  console.log(`✅ Single player winner declared for room ${roomId}`);
 }
 
 function handleGameMessage(msg, ws, player, roomId, rooms, roomReadyStatus, broadcastToRoom) {
   // Handle messages that don't require being in a room
   if (msg.type === 'getRoomStatuses') {
     const roomStatuses = {};
+    const requestedBuyIn = msg.buyIn ? Number(msg.buyIn) : null;
+    
+    // If buy-in is specified, only show rooms matching that buy-in
+    // Otherwise, aggregate by original room ID
     for (const [id, room] of Object.entries(rooms)) {
-      roomStatuses[id] = room.players.length;
+      // Skip if buy-in filter is specified and doesn't match
+      if (requestedBuyIn !== null && room.buyIn !== requestedBuyIn) {
+        continue;
+      }
+      
+      const originalRoomId = room.originalRoomId || id.replace(/_\d+k$/, ''); // Remove _20k suffix
+      if (!roomStatuses[originalRoomId]) {
+        roomStatuses[originalRoomId] = 0;
+      }
+      roomStatuses[originalRoomId] += room.players.length;
     }
     ws.send(JSON.stringify({
       type: "initialRoomData",
@@ -183,6 +275,7 @@ function handleGameMessage(msg, ws, player, roomId, rooms, roomReadyStatus, broa
     }));
     return true;
   }
+
 
   if (msg.type === 'ping') {
     ws.send(JSON.stringify({ type: "pong" }));
@@ -198,6 +291,29 @@ function handleGameMessage(msg, ws, player, roomId, rooms, roomReadyStatus, broa
   const currentPlayer = room.players[room.currentPlayerIndex];
 
   switch (msg.type) {
+    case "getSeatedPlayers": {
+      if (!roomId || !rooms[roomId]) {
+        ws.send(JSON.stringify({ 
+          type: "error", 
+          message: "Not in a room" 
+        }));
+        return true;
+      }
+      
+      const room = rooms[roomId];
+      ws.send(JSON.stringify({
+        type: "seatedPlayers",
+        players: room.players.map((p) => ({
+          playerId: p.playerId,
+          username: p.username,
+          displayName: p.displayName,
+          avatarUrl: p.avatarUrl || p.avatar_url,
+          userId: p.userId
+        })),
+      }));
+      return true;
+    }
+
     case "playerReady": {
       const { ready } = msg;
       
@@ -286,6 +402,7 @@ function handleGameMessage(msg, ws, player, roomId, rooms, roomReadyStatus, broa
         room.lastPlay = null;
         room.passCount = 0;
         room.currentPlayerIndex = 0;
+        room.gameFinished = true; // Mark game as finished so players can be removed when they disconnect
         console.log(`🎯 Final game over processed for room ${roomId}`);
       }
       return true;
@@ -455,11 +572,44 @@ function handleGameMessage(msg, ws, player, roomId, rooms, roomReadyStatus, broa
 }
 
 async function handleJoinRoom(msg, ws, rooms, roomReadyStatus, broadcastToRoom, broadcastPlayerCount) {
-  const requestedRoomId = msg.roomId;
+  // Normalize roomId: trim whitespace, convert to lowercase, ensure consistent format
+  let requestedRoomId = (msg.roomId || '').toString().trim().toLowerCase();
   const username = msg.username;
   const userId = msg.userId || msg.user_id; // Support both formats
-  const buyIn = msg.buyIn || msg.buy_in; // Buy-in amount (e.g., 20, 50, 100, 200)
+  const displayName = msg.displayName || msg.display_name || username;
+  const avatarUrl = msg.avatarUrl || msg.avatar_url || '';
+  // Normalize buyIn: ensure it's a number
+  const buyIn = msg.buyIn !== undefined ? Number(msg.buyIn) : (msg.buy_in !== undefined ? Number(msg.buy_in) : null);
   const gameType = msg.gameType || msg.game_type || 'mongol_13'; // Default game type
+
+  // Create composite room key that includes buy-in to ensure proper separation
+  // This ensures room_1 with 20k is different from room_1 with 50k
+  // If buyIn is not provided, try to find existing room with same base roomId and use its buyIn
+  let actualBuyIn = buyIn;
+  let compositeRoomId = buyIn ? `${requestedRoomId}_${buyIn}k` : requestedRoomId;
+  
+  // If buyIn is not provided, try to find existing room with same base roomId
+  if (!buyIn) {
+    // Look for existing room with same base roomId (could be with any buyIn)
+    const existingRoomKey = Object.keys(rooms).find(key => {
+      const baseKey = key.replace(/_\d+k$/, '');
+      return baseKey === requestedRoomId;
+    });
+    
+    if (existingRoomKey) {
+      const existingRoom = rooms[existingRoomKey];
+      if (existingRoom && existingRoom.buyIn) {
+        actualBuyIn = existingRoom.buyIn;
+        compositeRoomId = existingRoomKey;
+        console.log(`🔄 No buyIn provided, using existing room's buyIn: ${actualBuyIn} (room: ${compositeRoomId})`);
+      }
+    }
+  }
+
+  console.log(`🎮 Join room request: originalRoomId="${msg.roomId}", normalizedRoomId="${requestedRoomId}", buyIn=${buyIn}, actualBuyIn=${actualBuyIn}, compositeRoomId="${compositeRoomId}"`);
+  
+  // Use composite room ID to ensure proper separation by buy-in
+  const actualRoomId = compositeRoomId;
 
   if (!username) {
     ws.send(JSON.stringify({ type: "error", message: "Username is required" }));
@@ -478,7 +628,7 @@ async function handleJoinRoom(msg, ws, rooms, roomReadyStatus, broadcastToRoom, 
       const roomNumber = parseInt(requestedRoomId.replace(/\D/g, '')) || null;
       const activeGameRecord = activeGame.game;
       
-      if (activeGameRecord && activeGameRecord.room_id === roomNumber) {
+      if (activeGameRecord && activeGameRecord.room_id === roomNumber && activeGameRecord.buy_in === buyIn) {
         // Trying to rejoin the same game - allow it (will be handled by existing player check)
         console.log(`🔄 User ${userId} attempting to rejoin game ${gameId}`);
       } else {
@@ -574,28 +724,32 @@ async function handleJoinRoom(msg, ws, rooms, roomReadyStatus, broadcastToRoom, 
 
   const tournamentId = msg.tournamentId || null;
   
-  if (!rooms[requestedRoomId]) {
-    rooms[requestedRoomId] = {
+  if (!rooms[actualRoomId]) {
+    console.log(`🆕 Creating new room: ${actualRoomId} with buyIn=${actualBuyIn}`);
+    rooms[actualRoomId] = {
       players: [],
       currentPlayerIndex: 0,
       lastPlay: null,
       passCount: 0,
       playerPoints: {},
-      buyIn: buyIn || null,
+      buyIn: actualBuyIn || null,
       gameType: gameType,
-      tournamentId: tournamentId || null
+      tournamentId: tournamentId || null,
+      originalRoomId: requestedRoomId // Keep original for display purposes
     };
   } else {
+    console.log(`✅ Room exists: ${actualRoomId} with ${rooms[actualRoomId].players.length} players`);
     // Update tournament ID if provided
     if (tournamentId) {
-      rooms[requestedRoomId].tournamentId = tournamentId;
+      rooms[actualRoomId].tournamentId = tournamentId;
     }
   }
 
-  const room = rooms[requestedRoomId];
+  const room = rooms[actualRoomId];
   
-  // If room already has buy-in set, validate it matches
-  if (room.buyIn && buyIn && room.buyIn !== buyIn) {
+  // Validate buy-in matches (should always match due to composite key, but double-check)
+  if (room.buyIn && actualBuyIn && room.buyIn !== actualBuyIn) {
+    console.error(`❌ Buy-in mismatch: room has ${room.buyIn}, player sent ${actualBuyIn}`);
     ws.send(JSON.stringify({ 
       type: "error", 
       message: `This room is for ${room.buyIn}k buy-in. Please select the correct buy-in.` 
@@ -603,81 +757,102 @@ async function handleJoinRoom(msg, ws, rooms, roomReadyStatus, broadcastToRoom, 
     return null;
   }
   
-  // Set buy-in and game type if not already set
-  if (!room.buyIn && buyIn) {
-    room.buyIn = buyIn;
+  // Set buy-in and game type if not already set (use actualBuyIn which may have been inferred)
+  if (!room.buyIn && actualBuyIn) {
+    room.buyIn = actualBuyIn;
   }
   if (!room.gameType) {
     room.gameType = gameType;
   }
 
   // Check if username already exists in the room (reconnection)
+  // Only allow reconnection if game has started (60 second window)
   const existingPlayer = room.players.find((p) => p.username === username || (userId && p.userId === userId));
   if (existingPlayer) {
-    existingPlayer.ws = ws;
-    const player = existingPlayer;
-    const roomId = requestedRoomId;
+    // Check if reconnection is allowed (only if game started)
+    if (room.gameStarted && !room.gameFinished) {
+      existingPlayer.ws = ws;
+      const player = existingPlayer;
+      const roomId = actualRoomId;
 
-    // Handle reconnection - mark as connected
-    if (userId && room.gameId) {
-      await handlePlayerReconnect(userId, room.gameId);
-    }
+      // Handle reconnection - mark as connected (only if game started)
+      if (userId && room.gameId) {
+        await handlePlayerReconnect(userId, room.gameId);
+      }
 
-    ws.send(
-      JSON.stringify({
-        type: "roomJoined",
-        roomId,
-        playerId: player.playerId,
-        reconnected: true
-      })
-    );
+      // Reset single player winner timer since player reconnected
+      if (room.gameStarted && !room.gameFinished) {
+        const { resetSinglePlayerWinnerTimer } = require('./timerUtils');
+        resetSinglePlayerWinnerTimer(roomId, rooms, (roomId, winnerPlayer) => {
+          handleSinglePlayerWinner(roomId, winnerPlayer, rooms, broadcastToRoom);
+        });
+      }
 
-    ws.send(
-      JSON.stringify({
-        type: "seatedPlayers",
-        players: room.players.map((p) => ({
-          playerId: p.playerId,
-          username: p.username,
-        })),
-      })
-    );
-
-    // Send current points if available
-    if (room.playerPoints && Object.keys(room.playerPoints).length > 0) {
-      ws.send(JSON.stringify({
-        type: "gameState",
-        points: room.playerPoints,
-        gameEnded: false
-      }));
-    }
-
-    if (roomReadyStatus.has(roomId)) {
-      const readyStatus = roomReadyStatus.get(roomId);
-      ws.send(JSON.stringify({
-        type: "playerReadyStatus",
-        status: Object.fromEntries(readyStatus)
-      }));
-    }
-
-    if (player.hand && player.hand.length > 0) {
-      ws.send(JSON.stringify({
-        type: "hand",
-        hand: player.hand,
-        player: player.playerId,
-      }));
-    }
-
-    if (room.currentPlayerIndex !== undefined) {
       ws.send(
         JSON.stringify({
-          type: "turn",
-          player: room.players[room.currentPlayerIndex]?.playerId,
+          type: "roomJoined",
+          roomId: requestedRoomId, // Send original roomId to client
+          playerId: player.playerId,
+          reconnected: true
         })
       );
-    }
 
-    console.log(`🔄 Player ${player.playerId} reconnected to room ${roomId} (${username})`);
-    return { player, roomId };
+      ws.send(
+        JSON.stringify({
+          type: "seatedPlayers",
+          players: room.players.map((p) => ({
+            playerId: p.playerId,
+            username: p.username,
+            displayName: p.displayName || p.username,
+            avatarUrl: p.avatarUrl || p.avatar_url || '',
+            userId: p.userId
+          })),
+        })
+      );
+
+      // Send current points if available
+      if (room.playerPoints && Object.keys(room.playerPoints).length > 0) {
+        ws.send(JSON.stringify({
+          type: "gameState",
+          points: room.playerPoints,
+          gameEnded: false
+        }));
+      }
+
+      if (roomReadyStatus.has(roomId)) {
+        const readyStatus = roomReadyStatus.get(roomId);
+        ws.send(JSON.stringify({
+          type: "playerReadyStatus",
+          status: Object.fromEntries(readyStatus)
+        }));
+      }
+
+      if (player.hand && player.hand.length > 0) {
+        ws.send(JSON.stringify({
+          type: "hand",
+          hand: player.hand,
+          player: player.playerId,
+        }));
+      }
+
+      if (room.currentPlayerIndex !== undefined) {
+        ws.send(
+          JSON.stringify({
+            type: "turn",
+            player: room.players[room.currentPlayerIndex]?.playerId,
+          })
+        );
+      }
+
+      console.log(`🔄 Player ${player.playerId} reconnected to room ${roomId} (${username})`);
+      return { player, roomId };
+    } else {
+      // Game hasn't started or is finished - treat as new join
+      // Remove old player entry and add as new
+      room.players = room.players.filter((p) => p.playerId !== existingPlayer.playerId);
+      console.log(`🔄 Player ${existingPlayer.playerId} rejoining room ${actualRoomId} (game not started or finished, treating as new join)`);
+      // Continue to create new player below
+    }
   }
 
   if (room.players.length >= 4) {
@@ -696,9 +871,19 @@ async function handleJoinRoom(msg, ws, rooms, roomReadyStatus, broadcastToRoom, 
     }
   }
   
-  const player = { ws, playerId, username, hand: [], userId: userId || null };
+  const player = { 
+    ws, 
+    playerId, 
+    username, 
+    displayName: displayName || username,
+    avatarUrl: avatarUrl || '',
+    hand: [], 
+    userId: userId || null 
+  };
   room.players.push(player);
-  const roomId = requestedRoomId;
+  const roomId = actualRoomId;
+  
+  console.log(`👤 Player ${playerId} (${username}) joined room ${roomId}. Total players: ${room.players.length}`);
 
   // If game has already started, create/update player state
   if (userId && room.gameId) {
@@ -727,8 +912,9 @@ async function handleJoinRoom(msg, ws, rooms, roomReadyStatus, broadcastToRoom, 
   ws.send(
     JSON.stringify({
       type: "roomJoined",
-      roomId,
+      roomId: requestedRoomId, // Send original roomId to client for display
       playerId,
+      actualRoomId: roomId, // Include actual roomId for debugging
     })
   );
 
@@ -738,6 +924,9 @@ async function handleJoinRoom(msg, ws, rooms, roomReadyStatus, broadcastToRoom, 
     players: room.players.map((p) => ({
       playerId: p.playerId,
       username: p.username,
+      displayName: p.displayName || p.username,
+      avatarUrl: p.avatarUrl || p.avatar_url || '',
+      userId: p.userId
     })),
   }));
 
@@ -747,24 +936,47 @@ async function handleJoinRoom(msg, ws, rooms, roomReadyStatus, broadcastToRoom, 
   }));
 
   // Also broadcast to all players (including the new one) for consistency
-  broadcastToRoom(roomId, {
+  // Force broadcast to ensure all clients see the updated player list
+  const seatedPlayersMessage = {
     type: "seatedPlayers",
     players: room.players.map((p) => ({
       playerId: p.playerId,
       username: p.username,
+      displayName: p.displayName || p.username,
+      avatarUrl: p.avatarUrl || p.avatar_url || '',
+      userId: p.userId
     })),
-  }, rooms);
-
-  broadcastToRoom(roomId, {
+  };
+  
+  const readyStatusMessage = {
     type: "playerReadyStatus",
     status: Object.fromEntries(readyStatus)
-  }, rooms);
+  };
+  
+  // Broadcast to all players in the room
+  broadcastToRoom(roomId, seatedPlayersMessage, rooms);
+  broadcastToRoom(roomId, readyStatusMessage, rooms);
+  
+  // Also send individual messages to ensure delivery (sometimes broadcast might miss)
+  room.players.forEach((p) => {
+    if (p.ws && p.ws.readyState === 1) { // WebSocket.OPEN
+      try {
+        p.ws.send(JSON.stringify(seatedPlayersMessage));
+        p.ws.send(JSON.stringify(readyStatusMessage));
+      } catch (e) {
+        console.error(`❌ Error sending player list to player ${p.playerId}:`, e);
+      }
+    }
+  });
+  
+  console.log(`📢 Broadcasted player list to ${room.players.length} players in room ${roomId}`);
 
-  broadcastPlayerCount(roomId, rooms);
+  // broadcastPlayerCount is a bound function that includes wss, so call with just roomId
+  broadcastPlayerCount(roomId);
 
-  console.log(`🎮 Player ${playerId} joined room ${roomId} (${username})`);
+  console.log(`🎮 Player ${playerId} joined room ${roomId} (${username}). Room now has ${room.players.length}/4 players.`);
 
-  return { player, roomId };
+  return { player, roomId: actualRoomId };
 }
 
 async function finishGameWhenAllPlayersLeft(roomId, room, gameId) {
@@ -773,6 +985,9 @@ async function finishGameWhenAllPlayersLeft(roomId, room, gameId) {
   console.log(`🏁 Finishing game ${gameId} in room ${roomId} - all players disconnected`);
 
   try {
+    // Mark that all players left (don't reduce balance)
+    room.allPlayersLeft = true;
+    
     // Update game status to finished
     const { updateGameStatusToFinished } = require('../utils/gameLogic');
     await updateGameStatusToFinished(roomId, gameId);
@@ -785,7 +1000,7 @@ async function finishGameWhenAllPlayersLeft(roomId, room, gameId) {
       }
     }
 
-    console.log(`✅ Game ${gameId} finished and player states cleared`);
+    console.log(`✅ Game ${gameId} finished and player states cleared (all players left - no balance reduction)`);
   } catch (error) {
     console.error(`❌ Error finishing game ${gameId}:`, error);
   }
@@ -825,11 +1040,13 @@ async function handlePlayerDisconnect(roomId, player, rooms, roomReadyStatus, br
     clearTurnTimer(roomId, rooms);
   }
 
-  // Don't remove player from room if game has started - keep them for reconnection
-  if (!room.gameStarted) {
+  // Remove player from room if game hasn't started, or if game has finished
+  // Only keep players in room if game is actively in progress (for reconnection)
+  if (!room.gameStarted || room.gameFinished) {
     room.players = room.players.filter((p) => p.ws !== player.ws);
+    console.log(`🗑️ Removed player ${player.playerId} from room ${roomId} (gameStarted: ${room.gameStarted}, gameFinished: ${room.gameFinished || false})`);
   } else {
-    // Just mark websocket as null but keep player in room
+    // Just mark websocket as null but keep player in room for reconnection during active game
     const playerIndex = room.players.findIndex(p => p.playerId === player.playerId);
     if (playerIndex !== -1) {
       room.players[playerIndex].ws = null;
@@ -837,12 +1054,17 @@ async function handlePlayerDisconnect(roomId, player, rooms, roomReadyStatus, br
   }
 
   // Check if all players have disconnected from a started game
-  const connectedPlayers = room.players.filter(p => p.ws);
+  const connectedPlayers = room.players.filter(p => p.ws && p.ws.readyState === 1);
   if (room.gameStarted && connectedPlayers.length === 0 && room.players.length > 0) {
-    // All players disconnected - finish the game
+    // All players disconnected - finish the game (don't reduce balance)
     await finishGameWhenAllPlayersLeft(roomId, room, gameId);
     
+    // Broadcast player count before cleaning up (0 players)
+    // broadcastPlayerCount is a bound function that includes wss, so call with just roomId
+    broadcastPlayerCount(roomId);
+    
     // Clean up room
+    clearSinglePlayerWinnerTimer(roomId, rooms);
     delete rooms[roomId];
     roomReadyStatus.delete(roomId);
     cancelAutoStart(roomId, rooms);
@@ -852,6 +1074,11 @@ async function handlePlayerDisconnect(roomId, player, rooms, roomReadyStatus, br
   }
 
   if (room.players.length === 0 || (!room.gameStarted && connectedPlayers.length === 0)) {
+    // Broadcast player count before deleting room (0 players)
+    // broadcastPlayerCount is a bound function that includes wss, so call with just roomId
+    broadcastPlayerCount(roomId);
+    
+    clearSinglePlayerWinnerTimer(roomId, rooms);
     delete rooms[roomId];
     roomReadyStatus.delete(roomId);
     cancelAutoStart(roomId, rooms);
@@ -864,19 +1091,27 @@ async function handlePlayerDisconnect(roomId, player, rooms, roomReadyStatus, br
       disconnected: room.gameStarted, // true if game started, false if just left
     }, rooms);
 
-    broadcastPlayerCount(roomId, rooms);
+    // broadcastPlayerCount is a bound function that includes wss, so call with just roomId
+    broadcastPlayerCount(roomId);
+
+    // Check for single player winner timer (only if game started)
+    if (room.gameStarted && !room.gameFinished) {
+      resetSinglePlayerWinnerTimer(roomId, rooms, (roomId, winnerPlayer) => {
+        handleSinglePlayerWinner(roomId, winnerPlayer, rooms, broadcastToRoom);
+      });
+    }
 
     // Only continue game if there are connected players
     if (room.currentPlayerIndex !== undefined && connectedPlayers.length > 1 && room.gameStarted) {
       // Find next connected player
       let nextIndex = (room.currentPlayerIndex + 1) % room.players.length;
       let attempts = 0;
-      while (attempts < room.players.length && (!room.players[nextIndex] || !room.players[nextIndex].ws)) {
+      while (attempts < room.players.length && (!room.players[nextIndex] || !room.players[nextIndex].ws || room.players[nextIndex].ws.readyState !== 1)) {
         nextIndex = (nextIndex + 1) % room.players.length;
         attempts++;
       }
       
-      if (room.players[nextIndex] && room.players[nextIndex].ws) {
+      if (room.players[nextIndex] && room.players[nextIndex].ws && room.players[nextIndex].ws.readyState === 1) {
         room.currentPlayerIndex = nextIndex;
         startTurnTimer(roomId, rooms, broadcastToRoom, () => {});
         
@@ -898,6 +1133,7 @@ module.exports = {
   broadcastToRoom,
   broadcastPlayerCount,
   startGame,
-  autoPass
+  autoPass,
+  handleSinglePlayerWinner
 };
 

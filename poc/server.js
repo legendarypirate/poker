@@ -77,7 +77,7 @@ function createBroadcastToRoom(rooms) {
 
 // Helper function to create bound broadcastPlayerCount
 function createBroadcastPlayerCount(rooms) {
-  return (roomId) => broadcastPlayerCount(roomId, rooms);
+  return (roomId) => broadcastPlayerCount(roomId, rooms, wss);
 }
 
 // Helper function to create bound startTurnTimer
@@ -95,7 +95,7 @@ wss.on("connection", (ws) => {
   let player = null;
   let isAdmin = false;
 
-  ws.on("message", (msgStr) => {
+  ws.on("message", async (msgStr) => {
     let msg;
     try {
       msg = JSON.parse(msgStr);
@@ -134,6 +134,99 @@ wss.on("connection", (ws) => {
           console.error("Error in handleJoinRoom:", error);
           ws.send(JSON.stringify({ type: "error", message: "Error joining room" }));
         });
+      return;
+    }
+
+    // Handle leave room
+    if (msg.type === "leaveRoom") {
+      if (!roomId || !rooms[roomId] || !player) {
+        ws.send(JSON.stringify({ type: "error", message: "Not in a room" }));
+        return;
+      }
+
+      // Wrap in async IIFE to handle await properly
+      (async () => {
+        const { handlePlayerDisconnect } = require('./websocket/gameHandler');
+        const { clearPlayerState, getRoomGameId } = require('./websocket/disconnectHandler');
+        const { clearTurnTimer, cancelAutoStart } = require('./websocket/timerUtils');
+        
+        const room = rooms[roomId];
+        const gameId = room.gameId || getRoomGameId(roomId);
+        
+        // If game has finished, remove player immediately
+        if (room.gameFinished) {
+          room.players = room.players.filter((p) => p.ws !== player.ws);
+          
+          // Clear player state if exists
+          if (player.userId && gameId) {
+            await clearPlayerState(player.userId, gameId);
+          }
+          
+          createBroadcastPlayerCount(rooms)(roomId);
+          
+          // Clean up room if empty
+          if (room.players.length === 0) {
+            delete rooms[roomId];
+            roomReadyStatus.delete(roomId);
+            cancelAutoStart(roomId, rooms);
+            clearTurnTimer(roomId, rooms);
+          }
+          
+          console.log(`👋 Player ${player.playerId} left room ${roomId} after game finished`);
+          player = null;
+          roomId = null;
+          return;
+        } else if (room.gameStarted && !room.gameFinished) {
+          // Game is active, handle as disconnect (keep for reconnection within 60 sec)
+          // Only allow reconnection if game has started
+          await handlePlayerDisconnect(
+            roomId, 
+            player, 
+            rooms, 
+            roomReadyStatus, 
+            createBroadcastToRoom(rooms), 
+            createBroadcastPlayerCount(rooms),
+            clearTurnTimer,
+            cancelAutoStart,
+            createStartTurnTimer(rooms)
+          );
+          console.log(`👋 Player ${player.playerId} requested to leave room ${roomId} during active game (60s reconnection window)`);
+          // Don't clear player/roomId here as they might reconnect within 60 seconds
+          return;
+        } else {
+          // Game not started, remove player normally
+          room.players = room.players.filter((p) => p.ws !== player.ws);
+          
+          if (roomReadyStatus.has(roomId)) {
+            const readyStatus = roomReadyStatus.get(roomId);
+            readyStatus.delete(player.playerId);
+            cancelAutoStart(roomId, rooms);
+            
+            createBroadcastToRoom(rooms)(roomId, {
+              type: "playerReadyStatus",
+              status: Object.fromEntries(readyStatus)
+            });
+          }
+          
+          createBroadcastPlayerCount(rooms)(roomId);
+          
+          // Clean up room if empty
+          if (room.players.length === 0) {
+            delete rooms[roomId];
+            roomReadyStatus.delete(roomId);
+            cancelAutoStart(roomId, rooms);
+            clearTurnTimer(roomId, rooms);
+          }
+          
+          console.log(`👋 Player ${player.playerId} left room ${roomId}`);
+          player = null;
+          roomId = null;
+          return;
+        }
+      })().catch(error => {
+        console.error("Error handling leaveRoom:", error);
+        ws.send(JSON.stringify({ type: "error", message: "Error leaving room" }));
+      });
       return;
     }
 

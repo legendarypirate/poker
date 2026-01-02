@@ -22,9 +22,17 @@ function getRoomGameId(roomId) {
 
 /**
  * Handle player disconnect - mark as disconnected and start 60s timer
+ * Only works if game has started (checked in caller)
  */
 async function handlePlayerDisconnect(userId, gameId, roomId, rooms, onAutoFold) {
   if (!userId || !gameId) return;
+
+  // Check if game has started - only allow reconnection if game started
+  const room = rooms[roomId];
+  if (!room || !room.gameStarted) {
+    console.log(`⚠️ Cannot start disconnect timer - game not started in room ${roomId}`);
+    return;
+  }
 
   const timerKey = `${userId}_${gameId}`;
 
@@ -43,7 +51,7 @@ async function handlePlayerDisconnect(userId, gameId, roomId, rooms, onAutoFold)
       }
     );
 
-    console.log(`⏱️ Player ${userId} disconnected from game ${gameId}, starting 60s timer`);
+    console.log(`⏱️ Player ${userId} disconnected from game ${gameId}, starting 60s reconnection timer`);
 
     // Clear any existing timer
     if (disconnectTimers.has(timerKey)) {

@@ -200,7 +200,18 @@ export function canPlay(playCards: Card[], lastPlay: HandPlay | null): boolean {
   if (play.rank === HandRank.Straight && lastPlay.rank === HandRank.Straight) {
     const lastStraightValue = getStraightValue(lastPlay.cards);
     const playStraightValue = getStraightValue(playCards);
-    return playStraightValue > lastStraightValue;
+    
+    // If straight values are different, higher value wins
+    if (playStraightValue !== lastStraightValue) {
+      return playStraightValue > lastStraightValue;
+    }
+    
+    // If straight values are the same, compare by highest suit in the straight
+    // Find the highest suit in each straight
+    const lastMaxSuit = Math.max(...lastPlay.cards.map(c => suitOrder[c.suit] || 0));
+    const playMaxSuit = Math.max(...playCards.map(c => suitOrder[c.suit] || 0));
+    
+    return playMaxSuit > lastMaxSuit;
   }
   
   // For full houses, compare three-of-a-kind rank first, then pair rank

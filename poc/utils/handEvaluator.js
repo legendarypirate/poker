@@ -277,11 +277,37 @@ function canPlayCards(playedCards, lastPlay) {
   // Straight: 500+
   // Higher value always beats lower value
   console.log(`🔍 Comparing hands: Played=${playedHand.rank} (${playedHand.value}) vs Last=${lastHand.rank} (${lastHand.value})`);
-  const canBeat = playedHand.value > lastHand.value;
-  if (!canBeat) {
-    console.log(`❌ Cannot beat: ${playedHand.rank} (${playedHand.value}) <= ${lastHand.rank} (${lastHand.value})`);
+  
+  // If values are different, higher value wins
+  if (playedHand.value !== lastHand.value) {
+    const canBeat = playedHand.value > lastHand.value;
+    if (!canBeat) {
+      console.log(`❌ Cannot beat: ${playedHand.rank} (${playedHand.value}) <= ${lastHand.rank} (${lastHand.value})`);
+    }
+    return canBeat;
   }
-  return canBeat;
+  
+  // If values are the same and both are straights, compare by highest suit
+  if (playedHand.rank === 'Straight' && lastHand.rank === 'Straight') {
+    const lastMaxSuit = Math.max(...lastHand.cards.map(c => suitOrder[c.suit] || 0));
+    const playedMaxSuit = Math.max(...playedCards.map(c => suitOrder[c.suit] || 0));
+    const canBeat = playedMaxSuit > lastMaxSuit;
+    console.log(`🔍 Same straight value, comparing suits: Played max suit=${playedMaxSuit} vs Last max suit=${lastMaxSuit}, canBeat=${canBeat}`);
+    return canBeat;
+  }
+  
+  // For other hand types with same value, compare by highest suit of highest rank
+  const lastMaxRank = Math.max(...lastHand.cards.map(c => cardValue(c.rank)));
+  const playedMaxRank = Math.max(...playedCards.map(c => cardValue(c.rank)));
+  
+  if (playedMaxRank !== lastMaxRank) {
+    return playedMaxRank > lastMaxRank;
+  }
+  
+  // Same rank, compare suits
+  const lastMaxSuit = Math.max(...lastHand.cards.filter(c => cardValue(c.rank) === lastMaxRank).map(c => suitOrder[c.suit] || 0));
+  const playedMaxSuit = Math.max(...playedCards.filter(c => cardValue(c.rank) === playedMaxRank).map(c => suitOrder[c.suit] || 0));
+  return playedMaxSuit > lastMaxSuit;
 }
 
 module.exports = {

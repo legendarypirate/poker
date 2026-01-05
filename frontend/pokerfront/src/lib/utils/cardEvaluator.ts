@@ -98,11 +98,11 @@ export function evaluateHand(cards: Card[]): HandPlay {
 
 /**
  * Calculate the straight value for comparison
- * A-2-3-4-5 (lowest) = 5, 2-3-4-5-6 = 6, ..., 10-J-Q-K-A (highest) = 14
+ * A-2-3-4-5 (lowest) = 5, 2-3-4-5-6 = 6, 3-4-5-6-7 = 7, ..., 10-J-Q-K-A (highest) = 14
  */
 function getStraightValue(cards: Card[]): number {
   const ranks = new Set(cards.map(c => c.rank));
-  const sortedValues = cards.map(c => cardValue(c.rank)).sort((a, b) => a - b);
+  const sortedCards = [...cards].sort((a, b) => cardValue(a.rank) - cardValue(b.rank));
   
   // Check for A-2-3-4-5 (wheel - lowest straight)
   if (ranks.has('A') && ranks.has('2') && ranks.has('3') && 
@@ -116,8 +116,17 @@ function getStraightValue(cards: Card[]): number {
     return cardValue('A'); // 10-J-Q-K-A is valued at A (14, highest)
   }
   
-  // For all other straights, use the highest card in the straight
-  return Math.max(...sortedValues);
+  // For all other straights, find the actual highest card in the sequence
+  // Note: '2' has cardValue 15, but in a straight 2-3-4-5-6, the high card is 6, not 2
+  if (ranks.has('2')) {
+    // Straight contains 2, so find highest non-2 card (e.g., 2-3-4-5-6 -> 6)
+    const nonTwoCards = sortedCards.filter(c => c.rank !== '2');
+    // After filtering, the last card is the highest
+    return cardValue(nonTwoCards[nonTwoCards.length - 1].rank);
+  } else {
+    // No 2 in straight, highest card is the last one after sorting
+    return cardValue(sortedCards[4].rank);
+  }
 }
 
 export function canPlay(playCards: Card[], lastPlay: HandPlay | null): boolean {

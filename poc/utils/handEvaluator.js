@@ -146,12 +146,13 @@ function evaluateFiveCardHand(cards) {
   }
   
   if (isStraight) {
-    // Calculate straight value based on the highest card in the straight
-    // Order: A-2-3-4-5 (lowest, value 5) < 2-3-4-5-6 (value 6) < ... < 10-J-Q-K-A (highest, value 14)
+    // Calculate straight value based on the highest card in the straight sequence
+    // Order: A-2-3-4-5 (lowest, value 5) < 2-3-4-5-6 (value 6) < 3-4-5-6-7 (value 7) < ... < 10-J-Q-K-A (highest, value 14)
     let highCardValue;
     
-    // Check for A-2-3-4-5 (wheel - lowest straight)
     const ranks = sortedCards.map(c => c.rank);
+    
+    // Check for A-2-3-4-5 (wheel - lowest straight)
     if (ranks.includes('A') && ranks.includes('2') && ranks.includes('3') && 
         ranks.includes('4') && ranks.includes('5') && !ranks.includes('6')) {
       highCardValue = cardValue('5'); // A-2-3-4-5 is valued at 5 (lowest)
@@ -161,9 +162,20 @@ function evaluateFiveCardHand(cards) {
              ranks.includes('K') && ranks.includes('A') && !ranks.includes('2')) {
       highCardValue = cardValue('A'); // 10-J-Q-K-A is valued at A (14, highest)
     }
-    // For all other straights, use the highest card in the straight
+    // For all other straights, find the actual highest card in the sequence
+    // Note: '2' has cardValue 15, but in a straight 2-3-4-5-6, the high card is 6, not 2
     else {
-      highCardValue = cardValue(sortedCards[4].rank);
+      // For straights containing '2', find the highest non-2 card
+      // For straights without '2', use the highest card normally
+      if (ranks.includes('2')) {
+        // Straight contains 2, so find highest non-2 card (e.g., 2-3-4-5-6 -> 6)
+        const nonTwoCards = sortedCards.filter(c => c.rank !== '2');
+        // After filtering, the last card is the highest
+        highCardValue = cardValue(nonTwoCards[nonTwoCards.length - 1].rank);
+      } else {
+        // No 2 in straight, highest card is the last one after sorting
+        highCardValue = cardValue(sortedCards[4].rank);
+      }
     }
     
     return { rank: 'Straight', value: 500 + highCardValue, cards: cards };

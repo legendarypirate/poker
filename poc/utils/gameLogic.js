@@ -401,6 +401,11 @@ function checkRoundOver(roomId, rooms, clearTurnTimerFn, broadcastToRoomFn) {
     } else {
       // Continue to next round
       console.log(`🔄 Starting next round in room ${roomId}`);
+      // Clear lastPlay from previous round - new round starts fresh
+      room.lastPlay = null;
+      room.passCount = 0;
+      console.log(`🧹 Cleared lastPlay and passCount for new round`);
+      
       setTimeout(() => {
         broadcastToRoomFn(roomId, {
           type: 'newRoundStart',

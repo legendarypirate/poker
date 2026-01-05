@@ -334,8 +334,9 @@ function handleGameMessage(msg, ws, player, roomId, rooms, roomReadyStatus, broa
       
       console.log(`✅ Player ${player.playerId} ready: ${ready} (${readyPlayers}/${totalPlayers} ready)`);
       
-      if (readyPlayers >= 2 && readyPlayers === totalPlayers) {
-        console.log(`🚀 All players ready, auto-starting game in room ${roomId}`);
+      // Only start countdown when ALL players are ready
+      if (readyPlayers === totalPlayers && totalPlayers >= 2) {
+        console.log(`🚀 All ${totalPlayers} players ready, starting countdown in room ${roomId}`);
         const { startAutoStartCountdown } = require('./timerUtils');
         const { startTurnTimer } = require('./timerUtils');
         startAutoStartCountdown(roomId, rooms, broadcastToRoom, (roomId) => {
@@ -347,6 +348,7 @@ function handleGameMessage(msg, ws, player, roomId, rooms, roomReadyStatus, broa
           });
         });
       } else {
+        // Cancel countdown if not all players are ready
         const { cancelAutoStart } = require('./timerUtils');
         cancelAutoStart(roomId, rooms);
       }
@@ -356,9 +358,11 @@ function handleGameMessage(msg, ws, player, roomId, rooms, roomReadyStatus, broa
     case "startGame": {
       const readyStatus = roomReadyStatus.get(roomId);
       const readyPlayers = readyStatus ? Array.from(readyStatus.values()).filter(Boolean).length : 0;
+      const totalPlayers = room.players.length;
       
-      if (readyPlayers >= 2) {
-        console.log(`🎮 Manual game start in room ${roomId}`);
+      // Require ALL players to be ready before starting
+      if (readyPlayers === totalPlayers && totalPlayers >= 2) {
+        console.log(`🎮 Manual game start in room ${roomId} (all ${totalPlayers} players ready)`);
         const { cancelAutoStart, startTurnTimer } = require('./timerUtils');
         cancelAutoStart(roomId, rooms);
         startGame(roomId, rooms, roomReadyStatus, broadcastToRoom, (roomId) => {
@@ -374,7 +378,7 @@ function handleGameMessage(msg, ws, player, roomId, rooms, roomReadyStatus, broa
       } else {
         ws.send(JSON.stringify({ 
           type: "error", 
-          message: "Need at least 2 ready players to start" 
+          message: `Need all ${totalPlayers} players to be ready to start` 
         }));
       }
       return true;

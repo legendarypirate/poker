@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import { userStorage } from '@/lib/storage';
 import { WebSocketService } from '@/lib/websocket';
 import { Card, cardValue } from '@/lib/models/card';
@@ -90,6 +90,7 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
   const [playerPoints, setPlayerPoints] = useState<Record<number, number>>({});
   const [playerReadyStatus, setPlayerReadyStatus] = useState<Record<number, boolean>>({});
   const [isReady, setIsReady] = useState(false);
+  const [startCountdown, setStartCountdown] = useState<number | null>(null);
   const [wsService, setWsService] = useState<WebSocketService | null>(null);
   const [myUsername, setMyUsername] = useState<string>('');
   const [myDisplayName, setMyDisplayName] = useState<string>('');
@@ -223,9 +224,14 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
     // Listen for 'hand' event (backend sends this, not 'handReceived')
     ws.on('hand', (data: any) => {
       console.log('hand event:', data);
+      // Clear countdown when hand is received (game has started)
+      setStartCountdown(null);
       // Clear last played cards when new hand is dealt (new round)
       setPlayerLastPlayedCards({});
       setPreviousPlayerPassed(false);
+      // Clear lastPlay when receiving new hand - new round starts fresh
+      setLastPlay(null);
+      console.log('🔄 New hand received - cleared lastPlay for fresh round start');
       // Handle different possible data formats
       const hand = data.hand || data.cards || data;
       const normalizedHand = normalizeHand(hand);
@@ -419,6 +425,17 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
       }
     });
 
+    // Handle new round start event - clear all previous round state
+    ws.on('newRoundStart', (data: any) => {
+      console.log('newRoundStart event:', data);
+      // Clear last play from previous round - new round starts fresh
+      setLastPlay(null);
+      setPreviousPlayerPassed(false);
+      // Clear all player last played cards from previous round
+      setPlayerLastPlayedCards({});
+      console.log('🔄 New round started - cleared lastPlay and all previous round state');
+    });
+
     // Handle game over event
     ws.on('gameOver', async (data: any) => {
       console.log('gameOver event:', data);
@@ -512,6 +529,23 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
       const errorMsg = data.message || 'WebSocket холболт амжилтгүй боллоо. Серверийг шалгана уу.';
       toast.error(errorMsg);
       console.error('WebSocket error:', data);
+    });
+
+    // Listen for auto-start countdown
+    ws.on('autoStartCountdown', (data: any) => {
+      console.log('autoStartCountdown event:', data);
+      const countdownNumber = data.countdownNumber || data.remainingTime;
+      if (countdownNumber && countdownNumber > 0) {
+        setStartCountdown(countdownNumber);
+      } else {
+        setStartCountdown(null);
+      }
+    });
+
+    // Clear countdown when game starts
+    ws.on('gameStart', () => {
+      console.log('gameStart event - clearing countdown');
+      setStartCountdown(null);
     });
 
     ws.connect(username, roomId);
@@ -882,6 +916,37 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
     };
   }, [gameStarted, wsService, isConnected]);
 
+  // Auto-clear countdown when it reaches 0 or game starts
+  useEffect(() => {
+    if (startCountdown !== null && startCountdown <= 0) {
+      setStartCountdown(null);
+    }
+    if (gameStarted && startCountdown !== null) {
+      // Clear countdown when game starts
+      setStartCountdown(null);
+    }
+  }, [startCountdown, gameStarted]);
+
+  // Decrement countdown every second
+  useEffect(() => {
+    if (startCountdown === null || startCountdown <= 0) {
+      return;
+    }
+
+    const countdownInterval = setInterval(() => {
+      setStartCountdown((prev) => {
+        if (prev === null || prev <= 1) {
+          return null; // Clear when reaches 0
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => {
+      clearInterval(countdownInterval);
+    };
+  }, [startCountdown]);
+
   // Countdown timer effect - decrease remaining time every second when it's someone's turn
   useEffect(() => {
     if (!gameStarted || remainingTime <= 0) {
@@ -902,6 +967,31 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
 
   return (
     <div className="min-h-screen relative overflow-hidden">
+      {/* Game Start Countdown Overlay */}
+      <AnimatePresence>
+        {startCountdown !== null && startCountdown > 0 && (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.5 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.5 }}
+            className="fixed inset-0 z-[200] flex items-center justify-center pointer-events-none"
+          >
+            <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
+            <motion.div
+              key={startCountdown}
+              initial={{ scale: 0.5, opacity: 0 }}
+              animate={{ scale: [1.2, 1], opacity: [0.5, 1] }}
+              exit={{ scale: 0.5, opacity: 0 }}
+              className="relative z-10"
+            >
+              <div className="text-[200px] font-bold font-orbitron text-[#FFD700] drop-shadow-[0_0_40px_rgba(255,215,0,0.8)]">
+                {startCountdown}
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Royal Poker Table Background with Felt Texture */}
       <div className="absolute inset-0">
         {/* Base felt gradient */}

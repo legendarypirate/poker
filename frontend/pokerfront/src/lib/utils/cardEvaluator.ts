@@ -203,6 +203,42 @@ export function canPlay(playCards: Card[], lastPlay: HandPlay | null): boolean {
     return playStraightValue > lastStraightValue;
   }
   
+  // For full houses, compare three-of-a-kind rank first, then pair rank
+  if (play.rank === HandRank.FullHouse && lastPlay.rank === HandRank.FullHouse) {
+    const getFullHouseRanks = (cards: Card[]) => {
+      const rankCounts: Record<string, number> = {};
+      for (const card of cards) {
+        rankCounts[card.rank] = (rankCounts[card.rank] || 0) + 1;
+      }
+      let threeOfAKindRank: string | null = null;
+      let pairRank: string | null = null;
+      for (const [rank, count] of Object.entries(rankCounts)) {
+        if (count === 3) {
+          threeOfAKindRank = rank;
+        } else if (count === 2) {
+          pairRank = rank;
+        }
+      }
+      return { threeOfAKindRank, pairRank };
+    };
+    
+    const lastRanks = getFullHouseRanks(lastPlay.cards);
+    const playRanks = getFullHouseRanks(playCards);
+    
+    const lastThreeValue = cardValue(lastRanks.threeOfAKindRank || '');
+    const playThreeValue = cardValue(playRanks.threeOfAKindRank || '');
+    
+    // Compare three-of-a-kind first
+    if (playThreeValue !== lastThreeValue) {
+      return playThreeValue > lastThreeValue;
+    }
+    
+    // If three-of-a-kind is the same, compare pair
+    const lastPairValue = cardValue(lastRanks.pairRank || '');
+    const playPairValue = cardValue(playRanks.pairRank || '');
+    return playPairValue > lastPairValue;
+  }
+  
   // For other hands (including HighCard), compare highest card value first
   const lastMaxRank = Math.max(...lastPlay.cards.map(c => cardValue(c.rank)));
   const playMaxRank = Math.max(...playCards.map(c => cardValue(c.rank)));

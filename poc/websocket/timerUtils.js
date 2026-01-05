@@ -68,21 +68,32 @@ function startAutoStartCountdown(roomId, rooms, broadcastToRoom, startGame) {
     clearTimeout(room.autoStartTimer);
   }
 
-  let countdown = 10;
+  // Start countdown from 3, then 2, then 1, then start game
+  let countdown = 3;
+  
+  // Broadcast initial countdown
+  broadcastToRoom(roomId, {
+    type: "autoStartCountdown",
+    remainingTime: countdown,
+    countdownNumber: countdown
+  });
   
   const countdownInterval = setInterval(() => {
-    broadcastToRoom(roomId, {
-      type: "autoStartCountdown",
-      remainingTime: countdown
-    });
-
-    if (countdown <= 0) {
+    countdown--;
+    
+    if (countdown > 0) {
+      // Broadcast countdown number (3, 2, 1)
+      broadcastToRoom(roomId, {
+        type: "autoStartCountdown",
+        remainingTime: countdown,
+        countdownNumber: countdown
+      });
+    } else {
+      // Countdown finished, start the game
       clearInterval(countdownInterval);
       room.autoStartTimer = null;
       startGame(roomId);
     }
-    
-    countdown--;
   }, 1000);
 
   room.autoStartTimer = countdownInterval;

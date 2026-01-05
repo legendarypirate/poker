@@ -27,7 +27,7 @@ export default function BuyInPage() {
         </div>
       </div>
     );
-  }sss
+  }
 
   return <BuyInSelectionScreen />;
 }

@@ -114,11 +114,6 @@ export default function CardComponent({
         x.set(0);
         y.set(0);
       }}
-      style={{
-        rotateX: isSelected ? 0 : rotateX,
-        rotateY: isSelected ? 0 : rotateY,
-        transformStyle: 'preserve-3d',
-      }}
       whileHover={isSelected ? {} : { scale: 1.12, y: -8, z: 20 }}
       whileTap={{ scale: 0.94 }}
       animate={isSelected ? {
@@ -138,6 +133,9 @@ export default function CardComponent({
           : 'border-2 shadow-md'
       }`}
       style={{
+        rotateX: isSelected ? 0 : rotateX,
+        rotateY: isSelected ? 0 : rotateY,
+        transformStyle: 'preserve-3d',
         background: isSelected
           ? `linear-gradient(135deg, ${goldColor} 0%, #f59e0b 25%, #d97706 50%, #f59e0b 75%, ${goldColor} 100%)`
           : `linear-gradient(135deg, #ffffff 0%, #fafafa 25%, #ffffff 50%, #f9fafb 75%, #ffffff 100%)`,

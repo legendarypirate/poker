@@ -120,7 +120,25 @@ function evaluateFiveCardHand(cards) {
   }
   
   if (isFullHouse) {
-    return { rank: 'FullHouse', value: 700 + cardValue(sortedCards[2].rank), cards: cards };
+    // For full house, find the three-of-a-kind rank (the rank that appears 3 times)
+    const rankCounts = {};
+    for (const card of cards) {
+      rankCounts[card.rank] = (rankCounts[card.rank] || 0) + 1;
+    }
+    let threeOfAKindRank = null;
+    let pairRank = null;
+    for (const [rank, count] of Object.entries(rankCounts)) {
+      if (count === 3) {
+        threeOfAKindRank = rank;
+      } else if (count === 2) {
+        pairRank = rank;
+      }
+    }
+    // Full house value: 700 + threeOfAKind value * 100 + pair value
+    // This ensures three-of-a-kind is compared first, then pair
+    const threeValue = cardValue(threeOfAKindRank);
+    const pairValue = cardValue(pairRank);
+    return { rank: 'FullHouse', value: 700 + threeValue * 100 + pairValue, cards: cards };
   }
   
   if (isFlush) {

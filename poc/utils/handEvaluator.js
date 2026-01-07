@@ -116,7 +116,22 @@ function evaluateFiveCardHand(cards) {
   }
   
   if (isFourOfAKind) {
-    return { rank: 'FourOfAKind', value: 800 + cardValue(sortedCards[2].rank), cards: cards };
+    // For four of a kind, find the rank that appears 4 times
+    const rankCounts = {};
+    for (const card of cards) {
+      rankCounts[card.rank] = (rankCounts[card.rank] || 0) + 1;
+    }
+    let fourOfAKindRank = null;
+    for (const [rank, count] of Object.entries(rankCounts)) {
+      if (count === 4) {
+        fourOfAKindRank = rank;
+        break;
+      }
+    }
+    // Four of a kind value: 800 + rank value * 100
+    // This ensures it always beats Full House (700 + threeValue * 100 + pairValue)
+    // Example: 8 8 8 8 4 = 800 + 8*100 = 1600, which beats 7 7 7 3 3 = 700 + 7*100 + 3 = 1403
+    return { rank: 'FourOfAKind', value: 800 + cardValue(fourOfAKindRank) * 100, cards: cards };
   }
   
   if (isFullHouse) {
@@ -247,9 +262,12 @@ function evaluateHand(cards) {
           cards: sortedCards 
         };
       } else if (counts4[0] === 4) {
+        // For four of a kind (4 cards), find the rank that appears 4 times
+        const fourOfAKindRank = sortedCards[0].rank; // All 4 cards have the same rank
+        // Four of a kind value: 800 + rank value * 100 (consistent with 5-card evaluation)
         return { 
           rank: 'FourOfAKind', 
-          value: 800 + cardValue(sortedCards[0].rank), 
+          value: 800 + cardValue(fourOfAKindRank) * 100, 
           cards: sortedCards 
         };
       }

@@ -558,18 +558,20 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
 
     ws.on('opponentPass', (data: any) => {
       console.log('opponentPass received:', data);
-      if (data.shouldReset) {
-        console.log('Round reset - clearing lastPlay');
+      if (data.resetLastPlay || data.shouldReset) {
+        // Round reset - all players passed, clear lastPlay
+        console.log('Round reset - all players passed, clearing lastPlay');
         setLastPlay(null);
         setPreviousPlayerPassed(false);
         // Clear all player last played cards when round resets
         setPlayerLastPlayedCards({});
       } else {
-        // When a player passes (but round doesn't reset), mark that previous player passed
-        // This allows the next player to play any hand, not required to beat the previous hand
-        console.log('Player passed - next player can play any hand');
-        setPreviousPlayerPassed(true);
-        setLastPlay(null);
+        // When a player passes (but round doesn't reset), keep lastPlay
+        // Next player must still beat the last play or pass
+        // Only when ALL players pass should lastPlay be cleared
+        console.log('Player passed - but lastPlay remains, next player must beat it or pass');
+        setPreviousPlayerPassed(false); // Don't allow any hand, must beat lastPlay
+        // DO NOT clear lastPlay here - keep it until all players pass
       }
       // Request game state to sync lastPlay properly - this ensures we get the correct state
       // especially important when round resets and lastPlay should be null
@@ -646,22 +648,25 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
       if (data.remainingTime !== undefined && data.currentPlayer === myPlayerId) {
         setRemainingTime(data.remainingTime);
       }
-      // Update lastPlay - explicitly handle null/undefined to reset when round resets
-      // But if previousPlayerPassed is true, don't override it (keep it null to allow any play)
+      // Update lastPlay from gameState
+      // Only clear lastPlay when backend sends null (round reset - all players passed)
+      // Otherwise, always update lastPlay to match backend state
       if (data.lastPlay === null || data.lastPlay === undefined) {
         setLastPlay(null);
-        console.log('Last play reset from gameState (round reset)');
-      } else if (data.lastPlay && !previousPlayerPassed) {
-        // Only update lastPlay from gameState if previous player didn't pass
-        // If previous player passed, we want to keep lastPlay as null to allow any play
+        setPreviousPlayerPassed(false);
+        console.log('Last play reset from gameState (round reset - all players passed)');
+      } else if (data.lastPlay) {
+        // Update lastPlay from gameState - backend maintains it until all players pass
         const normalizedLastPlay = normalizeHand(data.lastPlay);
         if (normalizedLastPlay.length > 0) {
           const play = evaluateHand(normalizedLastPlay);
           setLastPlay(play);
+          setPreviousPlayerPassed(false);
           console.log('Last play updated from gameState:', play.rank, normalizedLastPlay.length, 'cards');
         } else {
           // If lastPlay is empty array, reset it
           setLastPlay(null);
+          setPreviousPlayerPassed(false);
         }
       }
       if (data.ended) {
@@ -921,8 +926,9 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
       canPlay: canPlay(selectedCards, lastPlay)
     });
 
-    // If previous player passed, allow any valid hand (don't require beating lastPlay)
-    const effectiveLastPlay = previousPlayerPassed ? null : lastPlay;
+    // Only allow playing a new hand (without beating lastPlay) when round is reset (all players passed)
+    // If lastPlay exists, must beat it or pass - don't allow weaker hands
+    const effectiveLastPlay = lastPlay;
     
     // Client-side validation - block invalid plays to prevent cards from being discarded
     // CRITICAL: Check card count FIRST before any other validation

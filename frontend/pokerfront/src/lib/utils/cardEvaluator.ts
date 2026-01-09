@@ -135,6 +135,12 @@ export function canPlay(playCards: Card[], lastPlay: HandPlay | null): boolean {
     return true;
   }
 
+  // CRITICAL: Must play the same number of cards as the last play
+  if (playCards.length !== lastPlay.cards.length) {
+    console.warn(`❌ Card count mismatch: trying to play ${playCards.length} cards against ${lastPlay.cards.length} cards`);
+    return false;
+  }
+
   const play = evaluateHand(playCards);
   if (play.rank === HandRank.Invalid) {
     console.error('Invalid play evaluated:', playCards);

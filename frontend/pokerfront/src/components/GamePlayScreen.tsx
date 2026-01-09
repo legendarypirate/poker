@@ -116,6 +116,125 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
     winningSuit?: string;
   } | null>(null);
 
+  // Chat state
+  const [showChatModal, setShowChatModal] = useState(false);
+  const [chatMessages, setChatMessages] = useState<Array<{
+    playerId: number;
+    username: string;
+    message: string;
+    timestamp: number;
+  }>>([]);
+  const [chatInput, setChatInput] = useState('');
+  const [beepedPlayers, setBeepedPlayers] = useState<Set<number>>(new Set());
+
+  // Play beep sound and show red background when any player has 1 card left
+  useEffect(() => {
+    if (!gameStarted) return;
+
+    // Calculate card counts for all players
+    const playerCardCounts = seatedPlayers.map((player) => {
+      const playerId = player.playerId;
+      // For all players, prefer opponentCardCounts (from backend) if available
+      // This ensures other players see the correct count for me
+      // For myself, fallback to playerHand.length if count not available
+      const cardCount = opponentCardCounts[playerId] !== undefined 
+        ? opponentCardCounts[playerId]
+        : (playerId !== myPlayerId
+            ? (player.cardCount !== undefined ? player.cardCount : 0)
+            : playerHand.length);
+      return { playerId, cardCount };
+    });
+
+    // Find all players with exactly 1 card left (including yourself)
+    const playersWithOneCard = playerCardCounts.filter(
+      p => p.cardCount === 1
+    );
+
+    // Trigger beep sound for each player who reaches 1 card (only once per player)
+    playersWithOneCard.forEach(({ playerId }) => {
+      if (!beepedPlayers.has(playerId)) {
+        // Play beep sound - try Web Audio API first (more reliable), fallback to MP3
+        const playBeep = async () => {
+          try {
+            // Try Web Audio API first (more reliable across browsers)
+            try {
+              const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
+              const audioContext = new AudioContext();
+              
+              // Resume audio context if suspended (required for user interaction)
+              if (audioContext.state === 'suspended') {
+                await audioContext.resume();
+              }
+              
+              const oscillator = audioContext.createOscillator();
+              const gainNode = audioContext.createGain();
+              
+              oscillator.connect(gainNode);
+              gainNode.connect(audioContext.destination);
+              
+              oscillator.frequency.value = 800; // Beep frequency
+              oscillator.type = 'sine';
+              
+              gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+              gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+              
+              oscillator.start(audioContext.currentTime);
+              oscillator.stop(audioContext.currentTime + 0.3);
+              
+              console.log('✅ Played beep sound via Web Audio API');
+              
+              // Cleanup after sound finishes
+              setTimeout(() => {
+                try {
+                  oscillator.disconnect();
+                  gainNode.disconnect();
+                  audioContext.close().catch(() => {});
+                } catch (e) {
+                  // Ignore cleanup errors
+                }
+              }, 400);
+            } catch (webAudioError) {
+              // Web Audio failed, try MP3 fallback
+              console.log('⚠️ Web Audio API failed, trying MP3 fallback:', webAudioError);
+              const audio = new Audio('/beep.mp3');
+              audio.volume = 0.5;
+              
+              const playPromise = audio.play();
+              if (playPromise !== undefined) {
+                await playPromise;
+                console.log('✅ Played beep sound from MP3 file');
+              }
+            }
+            
+            // Mark this player as beeped
+            setBeepedPlayers((prev) => {
+              const newSet = new Set(prev);
+              newSet.add(playerId);
+              return newSet;
+            });
+          } catch (error) {
+            console.error('❌ Error playing beep sound:', error);
+            // Mark as beeped even if sound fails to prevent retry loops
+            setBeepedPlayers((prev) => {
+              const newSet = new Set(prev);
+              newSet.add(playerId);
+              return newSet;
+            });
+          }
+        };
+        
+        playBeep();
+      }
+    });
+  }, [opponentCardCounts, playerHand.length, gameStarted, seatedPlayers, myPlayerId, beepedPlayers]);
+
+  // Reset beeped players when game starts or new round begins
+  useEffect(() => {
+    if (!gameStarted) {
+      setBeepedPlayers(new Set());
+    }
+  }, [gameStarted]);
+
   useEffect(() => {
     const username = userStorage.getUsername() || 'user';
     const displayName = userStorage.getDisplayName() || '';
@@ -137,7 +256,24 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
 
     ws.on('seatedPlayers', (data: any) => {
       console.log('Received seatedPlayers:', data);
-      setSeatedPlayers(data.players || data || []);
+      const players = data.players || data || [];
+      setSeatedPlayers(players);
+      
+      // Initialize card counts for all opponents if game has started
+      if (gameStarted && myPlayerId) {
+        setOpponentCardCounts((prev) => {
+          const updated = { ...prev };
+          players.forEach((player: any) => {
+            if (player.playerId !== myPlayerId) {
+              // Initialize to 13 if not already set (game started, so they should have 13 cards)
+              if (updated[player.playerId] === undefined) {
+                updated[player.playerId] = player.cardCount !== undefined ? player.cardCount : 13;
+              }
+            }
+          });
+          return updated;
+        });
+      }
     });
 
     // Listen for player join/leave events
@@ -231,6 +367,8 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
       setPreviousPlayerPassed(false);
       // Clear lastPlay when receiving new hand - new round starts fresh
       setLastPlay(null);
+      // Reset beeped players for new round
+      setBeepedPlayers(new Set());
       console.log('🔄 New hand received - cleared lastPlay for fresh round start');
       // Handle different possible data formats
       const hand = data.hand || data.cards || data;
@@ -241,6 +379,29 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
         setPlayerHand(sortedHand);
         setGameStarted(true);
         setRemainingTime(15);
+        
+        // Initialize card counts for all players when hand is dealt
+        // This ensures other players see the correct initial count for me
+        if (myPlayerId) {
+          setOpponentCardCounts((prev) => {
+            const updated = { ...prev };
+            // Initialize current player's count to the number of cards received
+            updated[myPlayerId] = sortedHand.length;
+            // Initialize opponent card counts to 13 for all other players
+            if (seatedPlayers.length > 0) {
+              seatedPlayers.forEach((player) => {
+                if (player.playerId !== myPlayerId) {
+                  // Only initialize if not already set
+                  if (updated[player.playerId] === undefined) {
+                    updated[player.playerId] = 13;
+                  }
+                }
+              });
+            }
+            console.log('📊 Initialized card counts (all players):', updated);
+            return updated;
+          });
+        }
       } else {
         console.warn('hand event: Invalid hand data format', data);
       }
@@ -275,6 +436,48 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
       
       console.log('opponentMove: Player', playerId, 'played', normalizedMove.length, 'cards');
       
+      // If this is our own move, ensure cards are removed from hand (backend confirmation)
+      // This handles cases where optimistic removal might have failed
+      if (playerId === myPlayerId) {
+        setPlayerHand((prev) => {
+          // Create a map to count how many of each card we need to remove
+          const cardsToRemove = new Map<string, number>();
+          normalizedMove.forEach((card) => {
+            const key = `${card.rank}${card.suit}`;
+            cardsToRemove.set(key, (cardsToRemove.get(key) || 0) + 1);
+          });
+
+          // Remove cards, handling duplicates correctly
+          const result: Card[] = [];
+          const removedCounts = new Map<string, number>();
+
+          prev.forEach((card) => {
+            const key = `${card.rank}${card.suit}`;
+            const needToRemove = cardsToRemove.get(key) || 0;
+            const alreadyRemoved = removedCounts.get(key) || 0;
+
+            if (needToRemove > 0 && alreadyRemoved < needToRemove) {
+              // Remove this card
+              removedCounts.set(key, alreadyRemoved + 1);
+            } else {
+              // Keep this card
+              result.push(card);
+            }
+          });
+
+          const totalRemoved = Array.from(removedCounts.values()).reduce((a, b) => a + b, 0);
+          if (totalRemoved === normalizedMove.length) {
+            console.log(`✅ Backend confirmed: Removed ${totalRemoved} cards from hand (${prev.length} -> ${result.length})`);
+          } else if (totalRemoved > 0) {
+            console.log(`⚠️ Backend confirmation: Removed ${totalRemoved} cards (expected ${normalizedMove.length}, had ${prev.length}, now ${result.length})`);
+          } else {
+            console.log(`ℹ️ Backend confirmation: Cards already removed (hand has ${prev.length} cards, played ${normalizedMove.length})`);
+          }
+
+          return result;
+        });
+      }
+      
       // Update lastPlay for all players (including current player)
       setLastPlay(play);
       // Reset previousPlayerPassed since someone just played cards
@@ -286,15 +489,42 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
         [playerId]: normalizedMove,
       }));
       
-      // Update opponent card counts (for all players except current player)
-      if (playerId !== myPlayerId) {
-        setOpponentCardCounts((prev) => ({
-          ...prev,
-          [playerId]: (prev[playerId] || 13) - (normalizedMove.length || 0),
-        }));
+      // Update card counts from backend if provided, otherwise calculate
+      if (data.cardCounts) {
+        // Use card counts from backend (most accurate)
+        // Update ALL players' counts, including myPlayerId (for other players to see correctly)
+        setOpponentCardCounts((prev) => {
+          const updated = { ...prev };
+          Object.entries(data.cardCounts).forEach(([pid, count]) => {
+            const playerIdNum = parseInt(pid, 10);
+            const countValue = typeof count === 'number' ? count : parseInt(String(count), 10);
+            // Update all players' counts - backend sends accurate counts for everyone
+            // This ensures other players see the correct count for the current player
+            updated[playerIdNum] = countValue;
+          });
+          console.log('📊 Updated card counts from opponentMove (all players):', updated);
+          console.log('📊 My player ID:', myPlayerId, 'My count in updated:', updated[myPlayerId]);
+          return updated;
+        });
       } else {
-        // For current player, update card count from hand length
-        // This is handled by removing cards from playerHand in handlePlayCards
+        // Fallback: calculate from move (for backward compatibility)
+        if (playerId !== myPlayerId) {
+          setOpponentCardCounts((prev) => {
+            // Only use current count if it's already set (don't default to 13)
+            // If not set, we can't calculate accurately, so don't update
+            if (prev[playerId] === undefined) {
+              console.warn(`⚠️ Cannot calculate card count for player ${playerId} - no initial count available`);
+              return prev; // Don't update if we don't have initial count
+            }
+            const currentCount = prev[playerId];
+            const newCount = Math.max(0, currentCount - (normalizedMove.length || 0));
+            console.log(`📊 Calculated card count for player ${playerId}: ${newCount} (was ${currentCount}, played ${normalizedMove.length})`);
+            return {
+              ...prev,
+              [playerId]: newCount,
+            };
+          });
+        }
       }
       
       // Immediately request game state to get updated turn after a move
@@ -309,6 +539,21 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
           ws.send({ type: 'getGameState' });
         }
       }, 300);
+    });
+
+    // Handle chat messages
+    ws.on('chatMessage', (data: any) => {
+      console.log('chatMessage received:', data);
+      const playerId = typeof data.playerId === 'string' ? parseInt(data.playerId, 10) : (data.playerId || data.player);
+      setChatMessages((prev) => [
+        ...prev,
+        {
+          playerId: playerId,
+          username: data.username || `Player ${playerId}`,
+          message: data.message,
+          timestamp: data.timestamp || Date.now(),
+        },
+      ]);
     });
 
     ws.on('opponentPass', (data: any) => {
@@ -342,12 +587,48 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
     ws.on('gameState', (data: any) => {
       console.log('gameState event:', data);
       if (data.points) setPlayerPoints(data.points);
+      // Update card counts from gameState if provided
+      if (data.cardCounts) {
+        setOpponentCardCounts((prev) => {
+          const updated = { ...prev };
+          Object.entries(data.cardCounts).forEach(([pid, count]) => {
+            const playerIdNum = parseInt(pid, 10);
+            // Update all players' counts - backend sends accurate counts for everyone
+            updated[playerIdNum] = count as number;
+          });
+          console.log('📊 Updated card counts from gameState (all players):', updated);
+          return updated;
+        });
+      }
       if (data.hand) {
         const normalizedHand = normalizeHand(data.hand);
         if (normalizedHand.length > 0) {
           const sortedHand = sortCardsByRank(normalizedHand);
-          console.log('Setting player hand from gameState:', sortedHand);
-          setPlayerHand(sortedHand);
+          // Only update hand from gameState if:
+          // 1. We don't have a hand yet (new game/round)
+          // 2. The hand from server has 13 cards (new round)
+          // 3. The hand from server has fewer cards than our current hand (backend confirms we played cards)
+          // This prevents overwriting our local state with stale data
+          setPlayerHand((prev) => {
+            if (prev.length === 0) {
+              // No hand yet, use server hand
+              console.log('Setting player hand from gameState (no hand yet):', sortedHand);
+              return sortedHand;
+            } else if (sortedHand.length === 13) {
+              // New round - 13 cards means fresh hand
+              console.log('Setting player hand from gameState (new round):', sortedHand);
+              return sortedHand;
+            } else if (sortedHand.length < prev.length) {
+              // Server confirms we have fewer cards (we played some)
+              // Use server hand as source of truth
+              console.log(`Setting player hand from gameState (server confirms fewer cards): ${prev.length} -> ${sortedHand.length}`);
+              return sortedHand;
+            } else {
+              // Server hand has same or more cards - might be stale, keep our local state
+              console.log(`Keeping local hand (${prev.length} cards) - server hand (${sortedHand.length} cards) might be stale`);
+              return prev;
+            }
+          });
         }
       }
       if (data.currentPlayer !== undefined) {
@@ -428,6 +709,21 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
     // Handle new round start event - clear all previous round state
     ws.on('newRoundStart', (data: any) => {
       console.log('newRoundStart event:', data);
+      // Reset beeped players for new round
+      setBeepedPlayers(new Set());
+      // Reset card counts - will be updated when new hand is dealt
+      if (data.cardCounts) {
+        setOpponentCardCounts((prev) => {
+          const updated = { ...prev };
+          Object.entries(data.cardCounts).forEach(([pid, count]) => {
+            const playerIdNum = parseInt(pid, 10);
+            // Update all players' counts - backend sends accurate counts for everyone
+            updated[playerIdNum] = count as number;
+          });
+          console.log('📊 Updated card counts from newRoundStart (all players):', updated);
+          return updated;
+        });
+      }
       // Clear last play from previous round - new round starts fresh
       setLastPlay(null);
       setPreviousPlayerPassed(false);
@@ -525,8 +821,18 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
     });
 
     ws.on('error', (data: any) => {
-      setIsConnected(false);
       const errorMsg = data.message || 'WebSocket холболт амжилтгүй боллоо. Серверийг шалгана уу.';
+      
+      // If error is about invalid move, don't disconnect - just show error
+      if (errorMsg.includes('Cannot play') || errorMsg.includes('Invalid') || errorMsg.includes('тоглох боломжгүй')) {
+        console.warn('⚠️ Move rejected by backend:', errorMsg);
+        toast.error(errorMsg);
+        // Don't disconnect on move validation errors
+        return;
+      }
+      
+      // For other errors, disconnect
+      setIsConnected(false);
       toast.error(errorMsg);
       console.error('WebSocket error:', data);
     });
@@ -619,6 +925,19 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
     const effectiveLastPlay = previousPlayerPassed ? null : lastPlay;
     
     // Client-side validation - block invalid plays to prevent cards from being discarded
+    // CRITICAL: Check card count FIRST before any other validation
+    if (effectiveLastPlay && selectedCards.length !== effectiveLastPlay.cards.length) {
+      const errorMsg = `Та ${effectiveLastPlay.cards.length} карт тоглох ёстой, гэхдээ ${selectedCards.length} карт сонгосон байна.`;
+      console.warn('⚠️ Card count mismatch:', {
+        selected: selectedCards.length,
+        required: effectiveLastPlay.cards.length,
+        lastPlay: effectiveLastPlay
+      });
+      toast.error(errorMsg);
+      // Don't send to backend and don't remove cards - validation failed
+      return;
+    }
+    
     const clientSideCanPlay = canPlay(selectedCards, effectiveLastPlay);
     
     if (!clientSideCanPlay && effectiveLastPlay) {
@@ -628,6 +947,8 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
         lastPlayRank: effectiveLastPlay.rank,
         playCards: selectedCards.map(c => `${c.rank}${c.suit}`),
         lastPlayCards: effectiveLastPlay.cards.map(c => `${c.rank}${c.suit}`),
+        playCardCount: selectedCards.length,
+        lastPlayCardCount: effectiveLastPlay.cards.length,
         playCardValues: selectedCards.map(c => ({ rank: c.rank, value: cardValue(c.rank), suit: c.suit })),
         lastPlayCardValues: effectiveLastPlay.cards.map(c => ({ rank: c.rank, value: cardValue(c.rank), suit: c.suit }))
       });
@@ -640,11 +961,8 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
     }
 
     // Validation passed - proceed with sending to backend
-    // Immediately update lastPlay to show in center (optimistic update)
-    setLastPlay(play);
-    // Reset previousPlayerPassed since we just played cards
-    setPreviousPlayerPassed(false);
-
+    // Don't update lastPlay optimistically - wait for backend confirmation
+    
     // Use 'move' type to match Flutter app and server expectations
     // Send cards in the same format as Flutter: array of {rank, suit} objects
     const cardsToSend = selectedCards.map(card => ({
@@ -663,22 +981,24 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
       cards: cardsToSend,
     });
 
-    // Store the last played cards for current player
-    setPlayerLastPlayedCards((prev) => ({
-      ...prev,
-      [myPlayerId]: selectedCards,
-    }));
-
-    // Only remove cards from hand after validation passes
-    setPlayerHand((prev) =>
-      prev.filter(
+    // Remove cards optimistically from hand immediately
+    // This prevents UI issues where cards appear to still be in hand
+    setPlayerHand((prev) => {
+      const filtered = prev.filter(
         (card) =>
           !selectedCards.some(
-            (selected) => selected.rank === card.rank && selected.suit === card.suit
+            (played) => played.rank === card.rank && played.suit === card.suit
           )
-      )
-    );
+      );
+      console.log(`🎴 Optimistically removed ${selectedCards.length} cards from hand (${prev.length} -> ${filtered.length})`);
+      return filtered;
+    });
+
+    // Clear selection immediately for UI
     setSelectedCards([]);
+    
+    // Cards will also be removed again when we receive opponentMove event
+    // for our own player ID (backend confirmation), but the filter will handle duplicates
     
     // Request game state and turn update after playing to ensure turn advances correctly
     // This ensures mobile player sees the correct turn after web player plays
@@ -1075,12 +1395,35 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
             const playerId = player.playerId;
             const isCurrent = currentPlayer === playerId;
             const isMe = playerId === myPlayerId;
-            const cardCount = playerId !== myPlayerId 
-              ? (opponentCardCounts[playerId] ?? (player.cardCount ?? 13))
-              : playerHand.length;
+            // Calculate card count - ensure it's always a number and displayed
+            // For all players, prefer opponentCardCounts (from backend) if available
+            // This ensures other players see the correct count for me
+            // For myself, fallback to playerHand.length if count not available
+            const cardCount = opponentCardCounts[playerId] !== undefined 
+              ? opponentCardCounts[playerId]
+              : (playerId !== myPlayerId
+                  ? (player.cardCount !== undefined && player.cardCount !== null
+                      ? player.cardCount 
+                      : (gameStarted ? 13 : 0)) // Default to 13 if game started, 0 otherwise
+                  : playerHand.length); // For myself, use actual hand length as fallback
             const points = playerPoints[playerId] ?? 0;
             const isEliminated = points >= 30;
             const lastPlayedCards = playerLastPlayedCards[playerId] || [];
+            const hasOneCard = cardCount === 1;
+            
+            // Check if only one player remains (has cards > 0)
+            const playersWithCards = seatedPlayers.filter(p => {
+              const pid = p.playerId;
+              // For all players, prefer opponentCardCounts (from backend) if available
+              const count = opponentCardCounts[pid] !== undefined 
+                ? opponentCardCounts[pid]
+                : (pid !== myPlayerId
+                    ? (p.cardCount !== undefined ? p.cardCount : 0)
+                    : playerHand.length);
+              return count > 0;
+            });
+            const onlyOnePlayerRemains = playersWithCards.length === 1;
+            const isLastPlayerRemaining = onlyOnePlayerRemains && playersWithCards[0]?.playerId === playerId;
             // Get avatar URL - check multiple possible fields and ensure it's a valid URL
             let avatarUrl = player.avatar_url || player.avatarUrl || '';
             // Clean up avatar URL - remove any whitespace and validate
@@ -1171,7 +1514,9 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
                     {/* Royal Avatar */}
                     <div
                       className={`w-16 h-16 rounded-full flex items-center justify-center text-white font-bold text-2xl border-3 overflow-hidden relative ${
-                        isCurrent && !isEliminated
+                        (isLastPlayerRemaining && !isMe) || (hasOneCard && !isMe)
+                          ? 'border-[#FF4757] shadow-lg shadow-[#FF4757]/50 animate-pulse'
+                          : isCurrent && !isEliminated
                           ? 'border-[#FFC107] shadow-lg shadow-[#FFC107]/50'
                           : isMe
                           ? 'border-[#3B82F6] shadow-lg shadow-[#3B82F6]/50'
@@ -1255,7 +1600,9 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
                     {/* Player Info Box */}
                     <div
                       className={`p-3 rounded-lg border-2 transition-all backdrop-blur-sm ${
-                        isCurrent && !isEliminated
+                        hasOneCard && !isMe && !isEliminated
+                          ? 'border-[#FF4757] bg-[#FF4757]/40 shadow-lg shadow-[#FF4757]/50 animate-pulse'
+                          : isCurrent && !isEliminated
                           ? 'border-[#00C896] bg-[#00C896]/30 shadow-lg shadow-[#00C896]/50'
                           : 'border-white/20 bg-black/50'
                       }`}
@@ -1266,11 +1613,16 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
                       {playerUserId && (
                         <p className="text-[#00C896] text-[10px] font-orbitron">ID: {formattedUserId}</p>
                       )}
-                      {cardCount > 0 && (
-                        <p className="text-[#FFD700] text-xs">Карт: {cardCount}</p>
-                      )}
+                      {/* Always show card count - use 0 if not available, but show it */}
+                      <p className={`text-xs font-bold ${hasOneCard && !isMe && !isEliminated ? 'text-[#FF4757] animate-pulse' : 'text-[#FFD700]'}`}>
+                        Карт: {cardCount > 0 ? cardCount : 0}
+                        {hasOneCard && !isMe && !isEliminated && ' ⚠️'}
+                      </p>
                       <p className="text-white/90 text-xs font-semibold">Оноо: {points}</p>
                       {isEliminated && <p className="text-[#FF4757] text-xs font-bold">OUT</p>}
+                      {hasOneCard && !isMe && (
+                        <p className="text-[#FF4757] text-xs font-bold animate-pulse">1 КАРТ ҮЛДЛЭЭ!</p>
+                      )}
                     </div>
                     {/* Last Played Cards - Right side (for left/center positioned players) */}
                     {lastPlayedCards.length > 0 && (idx !== 1) && (
@@ -1886,8 +2238,16 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
           <button className="w-12 h-12 bg-[#00C896] rounded-full flex items-center justify-center text-white hover:bg-[#00A884] transition shadow-lg">
             🔄
           </button>
-          <button className="w-12 h-12 bg-[#9C27B0] rounded-full flex items-center justify-center text-white hover:bg-purple-700 transition shadow-lg">
+          <button 
+            onClick={() => setShowChatModal(true)}
+            className="w-12 h-12 bg-[#9C27B0] rounded-full flex items-center justify-center text-white hover:bg-purple-700 transition shadow-lg relative"
+          >
             💬
+            {chatMessages.length > 0 && (
+              <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">
+                {chatMessages.length}
+              </span>
+            )}
           </button>
         </div>
       )}
@@ -1924,6 +2284,99 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
             setGameOverModalData(null);
           }}
         />
+      )}
+
+      {/* Chat Modal */}
+      {showChatModal && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center">
+          {/* Backdrop */}
+          <div 
+            className="absolute inset-0 bg-black/50 backdrop-blur-sm"
+            onClick={() => setShowChatModal(false)}
+          />
+
+          {/* Chat Modal */}
+          <motion.div
+            initial={{ scale: 0.8, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            exit={{ scale: 0.8, opacity: 0 }}
+            className="relative z-10 w-[90%] max-w-md h-[70vh] flex flex-col bg-gradient-to-br from-[#1a1a2e] to-[#16213e] rounded-[20px] border-2 border-[#9C27B0] shadow-2xl"
+          >
+            {/* Header */}
+            <div className="p-4 border-b border-[#9C27B0]/30 flex items-center justify-between">
+              <h2 className="text-[#FFD700] text-lg font-bold font-orbitron">💬 Чат</h2>
+              <button
+                onClick={() => setShowChatModal(false)}
+                className="text-white hover:text-[#FF4757] transition"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Messages */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-2">
+              {chatMessages.length === 0 ? (
+                <p className="text-white/50 text-center">Чат хоосон байна</p>
+              ) : (
+                chatMessages.map((msg, idx) => {
+                  const player = seatedPlayers.find(p => p.playerId === msg.playerId);
+                  const isMyMessage = msg.playerId === myPlayerId;
+                  return (
+                    <div
+                      key={idx}
+                      className={`p-2 rounded-lg ${
+                        isMyMessage
+                          ? 'bg-[#9C27B0]/30 ml-auto max-w-[80%]'
+                          : 'bg-black/30 mr-auto max-w-[80%]'
+                      }`}
+                    >
+                      <p className="text-[#00C896] text-xs font-bold">
+                        {player?.displayName || player?.username || msg.username}
+                      </p>
+                      <p className="text-white text-sm">{msg.message}</p>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            {/* Input */}
+            <div className="p-4 border-t border-[#9C27B0]/30 flex gap-2">
+              <input
+                type="text"
+                value={chatInput}
+                onChange={(e) => setChatInput(e.target.value)}
+                onKeyPress={(e) => {
+                  if (e.key === 'Enter' && chatInput.trim()) {
+                    if (wsService && wsService.isConnected()) {
+                      wsService.send({
+                        type: 'chat',
+                        message: chatInput.trim(),
+                      });
+                      setChatInput('');
+                    }
+                  }
+                }}
+                placeholder="Зурвас илгээх..."
+                className="flex-1 px-4 py-2 bg-black/50 border border-[#9C27B0]/30 rounded-lg text-white placeholder-white/50 focus:outline-none focus:border-[#9C27B0]"
+              />
+              <button
+                onClick={() => {
+                  if (chatInput.trim() && wsService && wsService.isConnected()) {
+                    wsService.send({
+                      type: 'chat',
+                      message: chatInput.trim(),
+                    });
+                    setChatInput('');
+                  }
+                }}
+                className="px-4 py-2 bg-[#9C27B0] text-white rounded-lg hover:bg-purple-700 transition"
+              >
+                Илгээх
+              </button>
+            </div>
+          </motion.div>
+        </div>
       )}
     </div>
   );

@@ -452,10 +452,19 @@ function handleGameMessage(msg, ws, player, roomId, rooms, roomReadyStatus, broa
 
       player.hand = removeCardsFromHand(player.hand, msg.cards);
 
+      // Broadcast move with updated card counts for all players
+      const { getPlayerCardCounts } = require('../utils/gameLogic');
+      const cardCounts = getPlayerCardCounts(room);
+      
+      // Debug: Log card counts to ensure they're correct
+      console.log(`📊 Card counts after move by player ${player.playerId}:`, cardCounts);
+      console.log(`📊 Player ${player.playerId} hand length: ${player.hand.length}`);
+
       broadcastToRoom(roomId, {
         type: "opponentMove",
         player: player.playerId,
         cards: msg.cards,
+        cardCounts: cardCounts, // Include card counts in the message - includes ALL players
       }, rooms);
 
       // Check if this move ended the round (player has no cards left)
@@ -555,18 +564,22 @@ function handleGameMessage(msg, ws, player, roomId, rooms, roomReadyStatus, broa
     }
 
     case "chat": {
-      if (!msg.message || typeof msg.message !== 'string') {
+      if (!player || !msg.message || typeof msg.message !== 'string') {
         ws.send(JSON.stringify({ type: "error", message: "Invalid chat message" }));
         return true;
       }
   
-      broadcastToRoom(roomId, {
-        type: "chat",
-        player: player.playerId,
-        username: player.username,
-        message: msg.message,
-        timestamp: Date.now(),
-      }, rooms);
+      // Broadcast chat message to all players in the room
+      const room = rooms[roomId];
+      if (room) {
+        broadcastToRoom(roomId, {
+          type: "chatMessage",
+          playerId: player.playerId,
+          username: player.username || `Player ${player.playerId}`,
+          message: msg.message,
+          timestamp: Date.now(),
+        }, rooms);
+      }
       return true;
     }
 

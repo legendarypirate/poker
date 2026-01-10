@@ -13,6 +13,7 @@ import CardComponent from './CardComponent';
 import RoundScoreModal from './RoundScoreModal';
 import GameOverModal from './GameOverModal';
 import toast from 'react-hot-toast';
+import { IoMdSend } from 'react-icons/io';
 
 interface GamePlayScreenProps {
   roomId: string;
@@ -76,6 +77,27 @@ function sortCardsByRank(cards: Card[]): Card[] {
   return sorted;
 }
 
+// Sort cards by suit (then by rank within suit)
+function sortCardsBySuit(cards: Card[]): Card[] {
+  const suitOrder: Record<string, number> = {
+    '♠': 1,  // Spade first (left side)
+    '♥': 2,
+    '♣': 3,
+    '♦': 4,
+  };
+
+  const sorted = [...cards].sort((a, b) => {
+    // First sort by suit order (low to high)
+    const suitDiff = (suitOrder[a.suit] || 0) - (suitOrder[b.suit] || 0);
+    if (suitDiff !== 0) return suitDiff;
+    
+    // For same suit, sort by rank value (high to low)
+    return cardValue(b.rank) - cardValue(a.rank);
+  });
+
+  return sorted;
+}
+
 export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
   const router = useRouter();
   const [playerHand, setPlayerHand] = useState<Card[]>([]);
@@ -126,6 +148,9 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
   }>>([]);
   const [chatInput, setChatInput] = useState('');
   const [beepedPlayers, setBeepedPlayers] = useState<Set<number>>(new Set());
+  const [sortBySuit, setSortBySuit] = useState(false);
+  const [isDesktop, setIsDesktop] = useState(false);
+  const [chatPosition, setChatPosition] = useState<'left' | 'right'>('right');
 
   // Play beep sound and show red background when any player has 1 card left
   useEffect(() => {
@@ -235,6 +260,21 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
     }
   }, [gameStarted]);
 
+  // Detect desktop and auto-open chat on desktop
+  useEffect(() => {
+    const checkIsDesktop = () => {
+      const isDesktopDevice = window.innerWidth >= 768; // md breakpoint
+      setIsDesktop(isDesktopDevice);
+      if (isDesktopDevice) {
+        setShowChatModal(true); // Auto-open chat on desktop
+      }
+    };
+    
+    checkIsDesktop();
+    window.addEventListener('resize', checkIsDesktop);
+    return () => window.removeEventListener('resize', checkIsDesktop);
+  }, []);
+
   useEffect(() => {
     const username = userStorage.getUsername() || 'user';
     const displayName = userStorage.getDisplayName() || '';
@@ -331,7 +371,7 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
       if (data?.hand) {
         const normalizedHand = normalizeHand(data.hand);
         if (normalizedHand.length > 0) {
-          const sortedHand = sortCardsByRank(normalizedHand);
+          const sortedHand = sortBySuit ? sortCardsBySuit(normalizedHand) : sortCardsByRank(normalizedHand);
           console.log('Setting player hand from gameStart:', sortedHand);
           setPlayerHand(sortedHand);
         }
@@ -347,7 +387,7 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
       const hand = data.hand || data.cards || data;
       const normalizedHand = normalizeHand(hand);
       if (normalizedHand.length > 0) {
-        const sortedHand = sortCardsByRank(normalizedHand);
+        const sortedHand = sortBySuit ? sortCardsBySuit(normalizedHand) : sortCardsByRank(normalizedHand);
         console.log('Setting player hand:', sortedHand);
         setPlayerHand(sortedHand);
       } else {
@@ -374,7 +414,7 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
       const hand = data.hand || data.cards || data;
       const normalizedHand = normalizeHand(hand);
       if (normalizedHand.length > 0) {
-        const sortedHand = sortCardsByRank(normalizedHand);
+        const sortedHand = sortBySuit ? sortCardsBySuit(normalizedHand) : sortCardsByRank(normalizedHand);
         console.log('Setting player hand from hand event:', sortedHand);
         setPlayerHand(sortedHand);
         setGameStarted(true);
@@ -545,15 +585,36 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
     ws.on('chatMessage', (data: any) => {
       console.log('chatMessage received:', data);
       const playerId = typeof data.playerId === 'string' ? parseInt(data.playerId, 10) : (data.playerId || data.player);
-      setChatMessages((prev) => [
-        ...prev,
-        {
+      setChatMessages((prev) => {
+        const newMessage = {
           playerId: playerId,
           username: data.username || `Player ${playerId}`,
           message: data.message,
           timestamp: data.timestamp || Date.now(),
-        },
-      ]);
+        };
+        // Play chat sound when new message arrives
+        try {
+          const audio = new Audio('/sounds/chat.mp3');
+          audio.volume = 0.5;
+          audio.play().catch((err) => {
+            // Fallback: use Web Audio API beep if file doesn't exist
+            const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            oscillator.frequency.value = 800;
+            oscillator.type = 'sine';
+            gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.1);
+            oscillator.start(audioContext.currentTime);
+            oscillator.stop(audioContext.currentTime + 0.1);
+          });
+        } catch (err) {
+          console.log('Could not play chat sound:', err);
+        }
+        return [...prev, newMessage];
+      });
     });
 
     ws.on('opponentPass', (data: any) => {
@@ -1468,51 +1529,52 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
             return (
               <div key={playerId}>
                 {/* Player Avatar with Timer Indicator */}
-                <div className={`absolute ${position} z-30`}>
-                  <div className="relative">
+                <div className={`absolute ${position} z-40`}>
+                  <div className="relative w-12 h-12 sm:w-16 sm:h-16">
                     {/* Timer Circle Indicator - only for current player or me */}
                     {(showTimer || isMe) && (
                       <svg 
-                        className="absolute inset-0 w-12 h-12 sm:w-16 sm:h-16 -rotate-90"
+                        className="absolute inset-0 w-full h-full -rotate-90"
                         style={{ 
-                          width: '48px', 
-                          height: '48px',
-                          filter: showTimer ? 'drop-shadow(0 0 8px rgba(255, 193, 7, 0.8))' : 'none'
+                          filter: showTimer ? 'drop-shadow(0 0 8px rgba(255, 193, 7, 0.8))' : 'none',
+                          zIndex: 41
                         }}
+                        viewBox="0 0 64 64"
+                        preserveAspectRatio="xMidYMid meet"
                       >
                         {/* Background circle */}
                         <circle
-                          cx="24"
-                          cy="24"
-                          r="22"
+                          cx="32"
+                          cy="32"
+                          r="30"
                           fill="none"
                           stroke={isMe ? 'rgba(59, 130, 246, 0.3)' : 'rgba(255, 193, 7, 0.2)'}
-                          strokeWidth="2.5"
+                          strokeWidth="3"
                         />
                         {/* Timer progress circle */}
                         {showTimer && (
                           <circle
-                            cx="24"
-                            cy="24"
-                            r="22"
+                            cx="32"
+                            cy="32"
+                            r="30"
                             fill="none"
                             stroke={remainingTime <= 5 ? '#FF4757' : '#FFC107'}
-                            strokeWidth="2.5"
+                            strokeWidth="3"
                             strokeLinecap="round"
-                            strokeDasharray={`${2 * Math.PI * 22}`}
-                            strokeDashoffset={`${2 * Math.PI * 22 * (1 - timerProgress)}`}
+                            strokeDasharray={`${2 * Math.PI * 30}`}
+                            strokeDashoffset={`${2 * Math.PI * 30 * (1 - timerProgress)}`}
                             className="transition-all duration-1000"
                           />
                         )}
                         {/* My player indicator (blue border) */}
                         {isMe && !showTimer && (
                           <circle
-                            cx="24"
-                            cy="24"
-                            r="23"
+                            cx="32"
+                            cy="32"
+                            r="31"
                             fill="none"
                             stroke="#3B82F6"
-                            strokeWidth="2"
+                            strokeWidth="2.5"
                             className="animate-pulse"
                           />
                         )}
@@ -1520,7 +1582,7 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
                     )}
                     {/* Royal Avatar */}
                     <div
-                      className={`w-12 h-12 sm:w-16 sm:h-16 rounded-full flex items-center justify-center text-white font-bold text-lg sm:text-2xl border-2 sm:border-3 overflow-hidden relative ${
+                      className={`w-full h-full rounded-full flex items-center justify-center text-white font-bold text-lg sm:text-2xl border-2 sm:border-3 overflow-hidden relative ${
                         (isLastPlayerRemaining && !isMe) || (hasOneCard && !isMe)
                           ? 'border-[#FF4757] shadow-lg shadow-[#FF4757]/50 animate-pulse'
                           : isCurrent && !isEliminated
@@ -1583,7 +1645,7 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
                     </div>
                     {/* Timer text overlay for current player */}
                     {showTimer && (
-                      <div className="absolute -bottom-6 left-1/2 -translate-x-1/2">
+                      <div className="absolute -bottom-6 left-1/2 -translate-x-1/2 z-50">
                         <div className="px-2 py-1 bg-black/70 rounded text-white text-xs font-bold">
                           {remainingTime}s
                         </div>
@@ -1592,7 +1654,10 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
                   </div>
                 </div>
                 {/* Player Info with Last Played Cards - Container */}
-                <div className={`absolute ${position} top-16 sm:top-20 z-50`}>
+                <div className={`absolute ${position} z-30`} style={{ 
+                  [idx === 2 ? 'bottom' : 'top']: idx === 2 ? 'calc(4rem + 80px)' : 'calc(4rem + 80px)',
+                  [idx === 2 ? 'top' : 'bottom']: 'auto'
+                }}>
                   <div className="relative flex items-center gap-1 sm:gap-2">
                     {/* Last Played Cards - Left side (for right-positioned players) */}
                     {lastPlayedCards.length > 0 && (idx === 1) && (
@@ -2243,8 +2308,17 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
       {/* Top Right Buttons - Only show during game */}
       {gameStarted && (
         <div className="absolute top-4 right-4 flex gap-2">
-          <button className="w-12 h-12 bg-[#00C896] rounded-full flex items-center justify-center text-white hover:bg-[#00A884] transition shadow-lg">
-            🔄
+          <button 
+            onClick={() => {
+              setSortBySuit(!sortBySuit);
+              setPlayerHand((prev) => {
+                return sortBySuit ? sortCardsByRank(prev) : sortCardsBySuit(prev);
+              });
+            }}
+            className="w-12 h-12 bg-[#00C896] rounded-full flex items-center justify-center text-white hover:bg-[#00A884] transition shadow-lg"
+            title={sortBySuit ? "Зэрэглэлээр эрэмбэлэх" : "Дүрсээр эрэмбэлэх"}
+          >
+            {sortBySuit ? '🔢' : '🔄'}
           </button>
           <button 
             onClick={() => setShowChatModal(true)}
@@ -2294,31 +2368,48 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
         />
       )}
 
-      {/* Chat Modal */}
+      {/* Chat Modal / Panel */}
       {showChatModal && (
-        <div className="fixed inset-0 z-[200] flex items-center justify-center">
-          {/* Backdrop */}
-          <div 
-            className="absolute inset-0 bg-black/50 backdrop-blur-sm"
-            onClick={() => setShowChatModal(false)}
-          />
+        <>
+          {/* Backdrop - only on mobile */}
+          {!isDesktop && (
+            <div 
+              className="fixed inset-0 z-[199] bg-black/50 backdrop-blur-sm"
+              onClick={() => setShowChatModal(false)}
+            />
+          )}
 
-          {/* Chat Modal */}
+          {/* Chat Modal / Panel */}
           <motion.div
-            initial={{ scale: 0.8, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            exit={{ scale: 0.8, opacity: 0 }}
-            className="relative z-10 w-[90%] max-w-md h-[70vh] flex flex-col bg-gradient-to-br from-[#1a1a2e] to-[#16213e] rounded-[20px] border-2 border-[#9C27B0] shadow-2xl"
+            initial={isDesktop ? { x: chatPosition === 'right' ? 400 : -400, opacity: 0 } : { scale: 0.8, opacity: 0 }}
+            animate={isDesktop ? { x: 0, opacity: 1 } : { scale: 1, opacity: 1 }}
+            exit={isDesktop ? { x: chatPosition === 'right' ? 400 : -400, opacity: 0 } : { scale: 0.8, opacity: 0 }}
+            className={`fixed z-[200] flex flex-col bg-gradient-to-br from-[#1a1a2e] to-[#16213e] border-2 border-[#9C27B0] shadow-2xl ${
+              isDesktop 
+                ? `${chatPosition === 'right' ? 'right-4' : 'left-4'} bottom-4 w-80 h-96 rounded-[20px]`
+                : 'inset-0 m-auto w-[90%] max-w-md h-[70vh] rounded-[20px]'
+            }`}
           >
             {/* Header */}
             <div className="p-4 border-b border-[#9C27B0]/30 flex items-center justify-between">
               <h2 className="text-[#FFD700] text-lg font-bold font-orbitron">💬 Чат</h2>
-              <button
-                onClick={() => setShowChatModal(false)}
-                className="text-white hover:text-[#FF4757] transition"
-              >
-                ✕
-              </button>
+              <div className="flex items-center gap-2">
+                {isDesktop && (
+                  <button
+                    onClick={() => setChatPosition(chatPosition === 'right' ? 'left' : 'right')}
+                    className="text-white hover:text-[#00C896] transition text-sm"
+                    title="Move chat"
+                  >
+                    {chatPosition === 'right' ? '←' : '→'}
+                  </button>
+                )}
+                <button
+                  onClick={() => setShowChatModal(false)}
+                  className="text-white hover:text-[#FF4757] transition"
+                >
+                  ✕
+                </button>
+              </div>
             </div>
 
             {/* Messages */}
@@ -2378,13 +2469,14 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
                     setChatInput('');
                   }
                 }}
-                className="px-4 py-2 bg-[#9C27B0] text-white rounded-lg hover:bg-purple-700 transition"
+                className="px-3 py-2 bg-[#9C27B0] text-white rounded-lg hover:bg-purple-700 transition flex items-center justify-center"
+                title="Илгээх"
               >
-                Илгээх
+                <IoMdSend className="w-5 h-5" />
               </button>
             </div>
           </motion.div>
-        </div>
+        </>
       )}
     </div>
   );

@@ -229,6 +229,42 @@ export function canPlay(playCards: Card[], lastPlay: HandPlay | null): boolean {
     return playMaxSuit > lastMaxSuit;
   }
   
+  // For four of a kind, compare the four-of-a-kind rank first, then the kicker
+  if (play.rank === HandRank.FourOfAKind && lastPlay.rank === HandRank.FourOfAKind) {
+    const getFourOfAKindRanks = (cards: Card[]) => {
+      const rankCounts: Record<string, number> = {};
+      for (const card of cards) {
+        rankCounts[card.rank] = (rankCounts[card.rank] || 0) + 1;
+      }
+      let fourOfAKindRank: string | null = null;
+      let kickerRank: string | null = null;
+      for (const [rank, count] of Object.entries(rankCounts)) {
+        if (count === 4) {
+          fourOfAKindRank = rank;
+        } else {
+          kickerRank = rank;
+        }
+      }
+      return { fourOfAKindRank, kickerRank };
+    };
+    
+    const lastRanks = getFourOfAKindRanks(lastPlay.cards);
+    const playRanks = getFourOfAKindRanks(playCards);
+    
+    const lastFourValue = cardValue(lastRanks.fourOfAKindRank || '');
+    const playFourValue = cardValue(playRanks.fourOfAKindRank || '');
+    
+    // Compare four-of-a-kind rank first
+    if (playFourValue !== lastFourValue) {
+      return playFourValue > lastFourValue;
+    }
+    
+    // If four-of-a-kind is the same, compare kicker
+    const lastKickerValue = cardValue(lastRanks.kickerRank || '');
+    const playKickerValue = cardValue(playRanks.kickerRank || '');
+    return playKickerValue > lastKickerValue;
+  }
+  
   // For full houses, compare three-of-a-kind rank first, then pair rank
   if (play.rank === HandRank.FullHouse && lastPlay.rank === HandRank.FullHouse) {
     const getFullHouseRanks = (cards: Card[]) => {

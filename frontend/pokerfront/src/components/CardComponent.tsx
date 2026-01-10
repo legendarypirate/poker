@@ -123,7 +123,7 @@ export default function CardComponent({
         z: 30,
       } : {}}
       transition={{ type: "spring", stiffness: 400, damping: 25 }}
-      className={`w-14 h-20 md:w-16 md:h-24 rounded-xl flex flex-col items-center justify-center relative cursor-pointer ${
+      className={`w-9 h-12 sm:w-12 sm:h-18 md:w-16 md:h-24 rounded-lg sm:rounded-xl flex flex-col items-center justify-center relative cursor-pointer ${
         isSelected
           ? 'border-4 shadow-2xl'
           : isStrongestInRange
@@ -197,7 +197,7 @@ export default function CardComponent({
 
       {/* Rank with elegant typography */}
       <motion.div 
-        className={`text-lg md:text-xl font-bold leading-tight ${isSelected ? 'text-white' : ''}`}
+        className={`text-xs sm:text-sm md:text-lg lg:text-xl font-bold leading-tight ${isSelected ? 'text-white' : ''}`}
         style={isSelected ? { 
           textShadow: '0 2px 4px rgba(0, 0, 0, 0.4), 0 0 8px rgba(0, 0, 0, 0.2)',
           fontWeight: 800,
@@ -210,7 +210,7 @@ export default function CardComponent({
       
       {/* Suit with elegant styling */}
       <motion.div 
-        className={`text-2xl md:text-3xl font-black leading-none mt-1 ${isSelected ? 'text-white' : ''}`}
+        className={`text-sm sm:text-base md:text-2xl lg:text-3xl font-black leading-none mt-0.5 sm:mt-1 ${isSelected ? 'text-white' : ''}`}
         style={isSelected ? { 
           textShadow: '0 2px 4px rgba(0, 0, 0, 0.4), 0 0 8px rgba(0, 0, 0, 0.2)',
           fontWeight: 900,

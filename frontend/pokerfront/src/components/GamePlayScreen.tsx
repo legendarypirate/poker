@@ -1449,15 +1449,16 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
             const avatarGradient = getAvatarGradient(playerUserId);
             const formattedUserId = formatUserId(playerUserId);
 
-            let position = 'top-10 left-1/2 -translate-x-1/2';
+            // Improved positioning for mobile to avoid overlaps
+            let position = 'top-4 sm:top-10 left-1/2 -translate-x-1/2';
             if (idx === 1) {
-              position = 'top-20 right-10';
+              position = 'top-12 sm:top-20 right-2 sm:right-10';
             }
             if (idx === 2) {
-              position = 'bottom-10 left-10';
+              position = 'bottom-24 sm:bottom-10 left-2 sm:left-10';
             }
             if (idx === 3) {
-              position = 'top-20 left-10';
+              position = 'top-12 sm:top-20 left-2 sm:left-10';
             }
 
             // Calculate timer progress (0 to 1)
@@ -1472,43 +1473,43 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
                     {/* Timer Circle Indicator - only for current player or me */}
                     {(showTimer || isMe) && (
                       <svg 
-                        className="absolute inset-0 w-16 h-16 -rotate-90"
+                        className="absolute inset-0 w-12 h-12 sm:w-16 sm:h-16 -rotate-90"
                         style={{ 
-                          width: '64px', 
-                          height: '64px',
+                          width: '48px', 
+                          height: '48px',
                           filter: showTimer ? 'drop-shadow(0 0 8px rgba(255, 193, 7, 0.8))' : 'none'
                         }}
                       >
                         {/* Background circle */}
                         <circle
-                          cx="32"
-                          cy="32"
-                          r="28"
+                          cx="24"
+                          cy="24"
+                          r="22"
                           fill="none"
                           stroke={isMe ? 'rgba(59, 130, 246, 0.3)' : 'rgba(255, 193, 7, 0.2)'}
-                          strokeWidth="3"
+                          strokeWidth="2.5"
                         />
                         {/* Timer progress circle */}
                         {showTimer && (
                           <circle
-                            cx="32"
-                            cy="32"
-                            r="28"
+                            cx="24"
+                            cy="24"
+                            r="22"
                             fill="none"
                             stroke={remainingTime <= 5 ? '#FF4757' : '#FFC107'}
-                            strokeWidth="3"
+                            strokeWidth="2.5"
                             strokeLinecap="round"
-                            strokeDasharray={`${2 * Math.PI * 28}`}
-                            strokeDashoffset={`${2 * Math.PI * 28 * (1 - timerProgress)}`}
+                            strokeDasharray={`${2 * Math.PI * 22}`}
+                            strokeDashoffset={`${2 * Math.PI * 22 * (1 - timerProgress)}`}
                             className="transition-all duration-1000"
                           />
                         )}
                         {/* My player indicator (blue border) */}
                         {isMe && !showTimer && (
                           <circle
-                            cx="32"
-                            cy="32"
-                            r="30"
+                            cx="24"
+                            cy="24"
+                            r="23"
                             fill="none"
                             stroke="#3B82F6"
                             strokeWidth="2"
@@ -1519,7 +1520,7 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
                     )}
                     {/* Royal Avatar */}
                     <div
-                      className={`w-16 h-16 rounded-full flex items-center justify-center text-white font-bold text-2xl border-3 overflow-hidden relative ${
+                      className={`w-12 h-12 sm:w-16 sm:h-16 rounded-full flex items-center justify-center text-white font-bold text-lg sm:text-2xl border-2 sm:border-3 overflow-hidden relative ${
                         (isLastPlayerRemaining && !isMe) || (hasOneCard && !isMe)
                           ? 'border-[#FF4757] shadow-lg shadow-[#FF4757]/50 animate-pulse'
                           : isCurrent && !isEliminated
@@ -1591,13 +1592,13 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
                   </div>
                 </div>
                 {/* Player Info with Last Played Cards - Container */}
-                <div className={`absolute ${position} top-20 z-50`}>
-                  <div className="relative flex items-center gap-2">
+                <div className={`absolute ${position} top-16 sm:top-20 z-50`}>
+                  <div className="relative flex items-center gap-1 sm:gap-2">
                     {/* Last Played Cards - Left side (for right-positioned players) */}
                     {lastPlayedCards.length > 0 && (idx === 1) && (
                       <div className="flex flex-row-reverse gap-0.5 items-center">
                         {lastPlayedCards.map((card, cardIdx) => (
-                          <div key={cardIdx} className="transform scale-[0.5] -mr-1 last:mr-0">
+                          <div key={cardIdx} className="transform scale-[0.4] sm:scale-[0.5] -mr-1 last:mr-0">
                             <CardComponent card={card} />
                           </div>
                         ))}
@@ -1605,7 +1606,7 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
                     )}
                     {/* Player Info Box */}
                     <div
-                      className={`p-3 rounded-lg border-2 transition-all backdrop-blur-sm ${
+                      className={`p-2 sm:p-3 rounded-lg border-2 transition-all backdrop-blur-sm ${
                         hasOneCard && !isMe && !isEliminated
                           ? 'border-[#FF4757] bg-[#FF4757]/40 shadow-lg shadow-[#FF4757]/50 animate-pulse'
                           : isCurrent && !isEliminated
@@ -1613,28 +1614,28 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
                           : 'border-white/20 bg-black/50'
                       }`}
                     >
-                      <p className="text-white text-xs font-bold font-orbitron">
+                      <p className="text-white text-[10px] sm:text-xs font-bold font-orbitron truncate max-w-[80px] sm:max-w-none">
                         {displayName}
                       </p>
                       {playerUserId && (
-                        <p className="text-[#00C896] text-[10px] font-orbitron">ID: {formattedUserId}</p>
+                        <p className="text-[#00C896] text-[9px] sm:text-[10px] font-orbitron">ID: {formattedUserId}</p>
                       )}
                       {/* Always show card count - use 0 if not available, but show it */}
-                      <p className={`text-xs font-bold ${hasOneCard && !isMe && !isEliminated ? 'text-[#FF4757] animate-pulse' : 'text-[#FFD700]'}`}>
+                      <p className={`text-[10px] sm:text-xs font-bold ${hasOneCard && !isMe && !isEliminated ? 'text-[#FF4757] animate-pulse' : 'text-[#FFD700]'}`}>
                         Карт: {cardCount > 0 ? cardCount : 0}
                         {hasOneCard && !isMe && !isEliminated && ' ⚠️'}
                       </p>
-                      <p className="text-white/90 text-xs font-semibold">Оноо: {points}</p>
-                      {isEliminated && <p className="text-[#FF4757] text-xs font-bold">OUT</p>}
+                      <p className="text-white/90 text-[10px] sm:text-xs font-semibold">Оноо: {points}</p>
+                      {isEliminated && <p className="text-[#FF4757] text-[10px] sm:text-xs font-bold">OUT</p>}
                       {hasOneCard && !isMe && (
-                        <p className="text-[#FF4757] text-xs font-bold animate-pulse">1 КАРТ ҮЛДЛЭЭ!</p>
+                        <p className="text-[#FF4757] text-[9px] sm:text-xs font-bold animate-pulse">1 КАРТ ҮЛДЛЭЭ!</p>
                       )}
                     </div>
                     {/* Last Played Cards - Right side (for left/center positioned players) */}
                     {lastPlayedCards.length > 0 && (idx !== 1) && (
                       <div className="flex flex-row gap-0.5 items-center">
                         {lastPlayedCards.map((card, cardIdx) => (
-                          <div key={cardIdx} className="transform scale-[0.5] -ml-1 first:ml-0">
+                          <div key={cardIdx} className="transform scale-[0.4] sm:scale-[0.5] -ml-1 first:ml-0">
                             <CardComponent card={card} />
                           </div>
                         ))}
@@ -1713,19 +1714,19 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
 
       {/* Player Hand */}
       {gameStarted && (
-        <div className="absolute bottom-32 left-0 right-0 z-50 overflow-visible">
+        <div className="absolute bottom-20 sm:bottom-32 left-0 right-0 z-50 overflow-visible">
           {playerHand.length > 0 ? (
             <>
               {/* Selection instructions with elegant animation */}
               {isMyTurn && selectedCards.length === 0 && (
                 <motion.div 
-                  className="text-center mb-4"
+                  className="text-center mb-2 sm:mb-4 px-2"
                   initial={{ opacity: 0, y: -10 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: 0.3 }}
                 >
                   <motion.p 
-                    className="text-white/90 text-sm md:text-base font-orbitron font-semibold"
+                    className="text-white/90 text-xs sm:text-sm md:text-base font-orbitron font-semibold"
                     animate={{
                       textShadow: [
                         '0 0 10px rgba(251, 191, 36, 0.5)',
@@ -1740,9 +1741,9 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
                 </motion.div>
               )}
               {/* Cards with elegant dealing animation */}
-              {/* Increased padding-top and minHeight to accommodate selected cards that move up 16px and scale to 1.15 */}
-              <div className="flex justify-center overflow-x-auto overflow-y-visible px-4 pt-20 pb-6" style={{ minHeight: '280px' }}>
-                <div className="relative flex md:gap-1">
+              {/* Mobile: Stack cards with overlap, Web: Normal spacing */}
+              <div className="flex justify-center overflow-x-auto overflow-y-visible px-1 sm:px-2 md:px-4 pt-16 sm:pt-20 pb-4 sm:pb-6" style={{ minHeight: '240px', WebkitOverflowScrolling: 'touch' }}>
+                <div className="relative flex min-w-max">
                   {playerHand.map((card, idx) => {
                     const isSelected = selectedCards.some(
                       (c) => c.rank === card.rank && c.suit === card.suit
@@ -1750,7 +1751,8 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
                     return (
                       <motion.div
                         key={`${card.rank}-${card.suit}-${idx}`}
-                        className={`relative ${idx > 0 ? '-ml-4 md:ml-0' : ''}`}
+                        // Mobile: negative margin for overlap to show all 13 cards, Web: normal gap
+                        className={`relative ${idx === 0 ? '' : 'sm:ml-2 -ml-3 sm:-ml-0'}`}
                         style={{
                           zIndex: isSelected ? 50 : playerHand.length - idx,
                         }}
@@ -1791,7 +1793,7 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
             </>
           ) : (
             <div className="text-white text-center py-4">
-              <p>Картууд хүлээгдэж байна...</p>
+              <p className="text-sm sm:text-base">Картууд хүлээгдэж байна...</p>
             </div>
           )}
         </div>
@@ -1800,7 +1802,7 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
       {/* Action Buttons - Royal Styled with Animations */}
       {gameStarted && isMyTurn && (
         <motion.div 
-          className="absolute bottom-4 left-0 right-0 flex justify-center gap-3 px-4 z-50"
+          className="absolute bottom-2 sm:bottom-4 left-0 right-0 flex justify-center gap-2 sm:gap-3 px-2 sm:px-4 z-50"
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.2 }}
@@ -1948,9 +1950,9 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
       {!gameStarted && (
         <div className="absolute inset-0 z-50 pointer-events-none">
           {/* Center info */}
-          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-auto">
-            <div className="bg-white/95 backdrop-blur-sm rounded-2xl border-2 border-[#00C896] px-6 py-4 shadow-2xl">
-              <p className="text-gray-800 font-bold text-lg text-center font-orbitron">
+          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-auto w-[90%] sm:w-auto max-w-[300px]">
+            <div className="bg-white/95 backdrop-blur-sm rounded-xl sm:rounded-2xl border-2 border-[#00C896] px-4 py-3 sm:px-6 sm:py-4 shadow-2xl">
+              <p className="text-gray-800 font-bold text-sm sm:text-lg text-center font-orbitron">
                 Бэлэн тоглогчид: {Object.values(playerReadyStatus).filter(Boolean).length}/{Math.max(seatedPlayers.length, Object.keys(playerReadyStatus).length || 1)}
               </p>
               {!isConnected && (
@@ -1975,22 +1977,22 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
               avatar_url: myAvatarUrl
             } : player;
             
-            // Calculate relative position
+            // Calculate relative position - optimized for mobile
             const getRelativePosition = (id: number) => {
-              if (!myPlayerId) return 'top-10 left-1/2 -translate-x-1/2';
+              if (!myPlayerId) return 'top-4 left-1/2 -translate-x-1/2';
               const diff = id - myPlayerId;
               const relativeId = (3 + diff) % 4;
               switch (relativeId) {
                 case 1: // Top center
-                  return 'top-10 left-1/2 -translate-x-1/2';
+                  return 'top-4 sm:top-10 left-1/2 -translate-x-1/2';
                 case 2: // Top right
-                  return 'top-20 right-10';
-                case 3: // Bottom left
-                  return 'bottom-10 left-10';
+                  return 'top-16 sm:top-20 right-2 sm:right-10';
+                case 3: // Bottom left (my position - show at bottom)
+                  return 'bottom-32 sm:bottom-10 left-2 sm:left-10';
                 case 0: // Top left
-                  return 'top-20 left-10';
+                  return 'top-16 sm:top-20 left-2 sm:left-10';
                 default:
-                  return 'top-10 left-1/2 -translate-x-1/2';
+                  return 'top-4 sm:top-10 left-1/2 -translate-x-1/2';
               }
             };
 
@@ -2017,9 +2019,9 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
             const formattedUserId = formatUserId(playerUserId);
 
             return (
-              <div key={seatId} className={`absolute ${position} pointer-events-auto`}>
+              <div key={seatId} className={`absolute ${position} pointer-events-auto w-[140px] sm:w-auto`}>
                 <motion.div
-                  className={`p-4 rounded-2xl border-3 ${
+                  className={`p-2 sm:p-4 rounded-xl sm:rounded-2xl border-2 sm:border-3 ${
                     isReady
                       ? 'border-[#2ED573] bg-gradient-to-br from-white via-white to-[#2ED573]/10 backdrop-blur-sm'
                       : isMe
@@ -2036,7 +2038,7 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
                   whileHover={{ scale: 1.05 }}
                   transition={{ type: "spring", stiffness: 300, damping: 20 }}
                 >
-                  <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-2 sm:gap-3 flex-wrap sm:flex-nowrap">
                     {/* Royal Avatar with Poker Theme */}
                     <div className="relative">
                       {isReady && (isOccupied || isMe) && (
@@ -2047,7 +2049,7 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
                         />
                       )}
                       <div
-                        className="w-16 h-16 rounded-full flex items-center justify-center text-white font-bold text-2xl border-3 shadow-xl overflow-hidden relative"
+                        className="w-12 h-12 sm:w-16 sm:h-16 rounded-full flex items-center justify-center text-white font-bold text-lg sm:text-2xl border-2 sm:border-3 shadow-xl overflow-hidden relative"
                         style={{
                           background: (isOccupied || isMe)
                             ? avatarUrl 
@@ -2113,7 +2115,7 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
 
                     {/* Ready/Not Ready buttons - only for MY player */}
                     {isMe && (isOccupied || myPlayerId) && (
-                      <>
+                      <div className="flex gap-1.5 sm:gap-2">
                         {/* Ready (Check) button */}
                         <button
                           onClick={(e) => {
@@ -2123,7 +2125,7 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
                             handleReady(true);
                           }}
                           disabled={isReady || !isConnected}
-                          className={`w-10 h-10 rounded-full flex items-center justify-center border-2 transition-all ${
+                          className={`w-8 h-8 sm:w-10 sm:h-10 rounded-full flex items-center justify-center border-2 transition-all ${
                             isReady
                               ? 'bg-[#2ED573] border-[#2ED573] shadow-lg shadow-[#2ED573]/50 cursor-default'
                               : !isConnected
@@ -2133,7 +2135,7 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
                           title={isReady ? 'Бэлэн байна' : !isConnected ? 'Холбогдоогүй байна' : 'Бэлэн болгох'}
                         >
                           <svg
-                            className={`w-6 h-6 ${isReady ? 'text-white' : !isConnected ? 'text-gray-500' : 'text-[#2ED573]'}`}
+                            className={`w-4 h-4 sm:w-6 sm:h-6 ${isReady ? 'text-white' : !isConnected ? 'text-gray-500' : 'text-[#2ED573]'}`}
                             fill="none"
                             stroke="currentColor"
                             strokeWidth={3}
@@ -2157,7 +2159,7 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
                             handleReady(false);
                           }}
                           disabled={!isReady || !isConnected}
-                          className={`w-10 h-10 rounded-full flex items-center justify-center border-2 transition-all ${
+                          className={`w-8 h-8 sm:w-10 sm:h-10 rounded-full flex items-center justify-center border-2 transition-all ${
                             !isReady
                               ? 'bg-[#FF4757] border-[#FF4757] shadow-lg shadow-[#FF4757]/50 cursor-default'
                               : !isConnected
@@ -2167,7 +2169,7 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
                           title={!isReady ? 'Бэлэн биш' : !isConnected ? 'Холбогдоогүй байна' : 'Бэлэн төлөв цуцлах'}
                         >
                           <svg
-                            className={`w-6 h-6 ${!isReady ? 'text-white' : !isConnected ? 'text-gray-500' : 'text-[#FF4757]'}`}
+                            className={`w-4 h-4 sm:w-6 sm:h-6 ${!isReady ? 'text-white' : !isConnected ? 'text-gray-500' : 'text-[#FF4757]'}`}
                             fill="none"
                             stroke="currentColor"
                             strokeWidth={3}
@@ -2183,33 +2185,33 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
                         </button>
 
                         {/* Action buttons next to ready buttons */}
-                        <div className="flex gap-2 ml-2">
-                          <button className="w-8 h-8 bg-[#00C896] rounded-full flex items-center justify-center text-white hover:bg-[#00A884] transition shadow-lg">
+                        <div className="flex gap-1 sm:gap-2 ml-1 sm:ml-2">
+                          <button className="w-7 h-7 sm:w-8 sm:h-8 bg-[#00C896] rounded-full flex items-center justify-center text-white hover:bg-[#00A884] transition shadow-lg text-xs sm:text-sm">
                             🔄
                           </button>
-                          <button className="w-8 h-8 bg-[#9C27B0] rounded-full flex items-center justify-center text-white hover:bg-purple-700 transition shadow-lg">
+                          <button className="w-7 h-7 sm:w-8 sm:h-8 bg-[#9C27B0] rounded-full flex items-center justify-center text-white hover:bg-purple-700 transition shadow-lg text-xs sm:text-sm">
                             💬
                           </button>
                         </div>
-                      </>
+                      </div>
                     )}
                   </div>
 
                   {/* Player name and ID */}
-                  <div className="mt-2 text-center min-w-[120px]">
-                    <p className="text-gray-800 text-sm font-bold font-orbitron">
+                  <div className="mt-1.5 sm:mt-2 text-center w-full">
+                    <p className="text-gray-800 text-xs sm:text-sm font-bold font-orbitron truncate">
                       {(isOccupied || isMe)
                         ? displayName
                         : 'Хоосон'}
                     </p>
                     {(isOccupied || isMe) && playerUserId && (
-                      <p className="text-[10px] font-orbitron mt-1 text-gray-500">
+                      <p className="text-[9px] sm:text-[10px] font-orbitron mt-0.5 sm:mt-1 text-gray-500">
                         ID: {formattedUserId}
                       </p>
                     )}
                     {(isOccupied || isMe) && (
                       <p
-                        className={`text-xs font-orbitron mt-1 ${
+                        className={`text-[10px] sm:text-xs font-orbitron mt-0.5 sm:mt-1 ${
                           isReady ? 'text-[#2ED573] font-semibold' : 'text-gray-600'
                         }`}
                       >

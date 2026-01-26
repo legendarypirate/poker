@@ -877,16 +877,9 @@ async function handleJoinRoom(msg, ws, rooms, roomReadyStatus, broadcastToRoom, 
     return null;
   }
 
-  // Calculate next available playerId (handle gaps from players leaving)
-  const existingPlayerIds = room.players.map(p => p.playerId).sort((a, b) => a - b);
-  let playerId = 1;
-  for (let i = 0; i < existingPlayerIds.length; i++) {
-    if (existingPlayerIds[i] === playerId) {
-      playerId++;
-    } else {
-      break;
-    }
-  }
+  // Assign playerId based on join order (sequential, no gap filling)
+  // This ensures players are seated in the order they joined
+  const playerId = room.players.length + 1;
   
   const player = { 
     ws, 

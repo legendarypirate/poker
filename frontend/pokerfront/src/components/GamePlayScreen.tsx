@@ -12,8 +12,12 @@ import { getPokerAvatar, getAvatarGradient, formatUserId } from '@/lib/utils/ava
 import CardComponent from './CardComponent';
 import RoundScoreModal from './RoundScoreModal';
 import GameOverModal from './GameOverModal';
+import ChairIcon from './ChairIcon';
+import OfficePersonIcon from './OfficePersonIcon';
 import toast from 'react-hot-toast';
 import { IoMdSend } from 'react-icons/io';
+import { FaPlay, FaHandPaper, FaLightbulb, FaTimes, FaWifi } from 'react-icons/fa';
+import { MdClear, MdSignalWifiOff } from 'react-icons/md';
 
 interface GamePlayScreenProps {
   roomId: string;
@@ -98,6 +102,25 @@ function sortCardsBySuit(cards: Card[]): Card[] {
   return sorted;
 }
 
+// Helper function to get avatar path based on player count and index
+function getAvatarPath(playerIndex: number, totalPlayers: number): string {
+  if (totalPlayers === 1) {
+    return '/avatar.png';
+  } else if (totalPlayers === 2) {
+    return playerIndex === 0 ? '/avatar.png' : '/avatar1.png';
+  } else if (totalPlayers === 3) {
+    if (playerIndex === 0) return '/avatar.png';
+    if (playerIndex === 1) return '/avatar1.png';
+    return '/avatar2.png';
+  } else if (totalPlayers >= 4) {
+    if (playerIndex === 0) return '/avatar.png';
+    if (playerIndex === 1) return '/avatar1.png';
+    if (playerIndex === 2) return '/avatar2.png';
+    return '/avatar3.png';
+  }
+  return '/avatar.png';
+}
+
 export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
   const router = useRouter();
   const [playerHand, setPlayerHand] = useState<Card[]>([]);
@@ -138,6 +161,9 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
     winningSuit?: string;
   } | null>(null);
 
+  // Rejoin modal state
+  const [showRejoinModal, setShowRejoinModal] = useState(false);
+
   // Chat state
   const [showChatModal, setShowChatModal] = useState(false);
   const [chatMessages, setChatMessages] = useState<Array<{
@@ -148,6 +174,7 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
   }>>([]);
   const [chatInput, setChatInput] = useState('');
   const [beepedPlayers, setBeepedPlayers] = useState<Set<number>>(new Set());
+  const [disconnectedPlayers, setDisconnectedPlayers] = useState<Set<number>>(new Set());
   const [sortBySuit, setSortBySuit] = useState(false);
   const [isDesktop, setIsDesktop] = useState(false);
   const [chatPosition, setChatPosition] = useState<'left' | 'right'>('right');
@@ -299,6 +326,25 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
       const players = data.players || data || [];
       setSeatedPlayers(players);
       
+      // If game has started, check if any previously disconnected players are now in the list
+      // This handles cases where reconnection happens but roomJoined event wasn't caught
+      if (gameStarted) {
+        setDisconnectedPlayers(prev => {
+          const newSet = new Set(prev);
+          const currentPlayerIds = new Set(players.map((p: any) => p.playerId));
+          // Remove players from disconnected set if they're in the current players list
+          // (they may have reconnected)
+          prev.forEach(playerId => {
+            if (currentPlayerIds.has(playerId)) {
+              // Player is still in the game, might have reconnected
+              // We'll keep them as disconnected until we get explicit reconnection signal
+              // or they make a move
+            }
+          });
+          return newSet;
+        });
+      }
+      
       // Initialize card counts for all opponents if game has started
       if (gameStarted && myPlayerId) {
         setOpponentCardCounts((prev) => {
@@ -325,6 +371,16 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
 
     ws.on('playerLeft', (data: any) => {
       console.log('Player left:', data);
+      // If player disconnected during active game, mark them as disconnected
+      // Check both explicit disconnected flag and if game has started
+      if (data.player && (data.disconnected || gameStarted)) {
+        setDisconnectedPlayers(prev => {
+          const newSet = new Set(prev);
+          newSet.add(data.player);
+          return newSet;
+        });
+        console.log(`📡 Player ${data.player} disconnected during game`);
+      }
       // Request updated player list
       ws.send({ type: 'getSeatedPlayers' });
     });
@@ -462,6 +518,15 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
       console.log('turn event received:', { playerId, remainingTime: time, myPlayerId });
       setCurrentPlayer(playerId);
       setRemainingTime(time);
+      // If this is our turn after reconnecting, ensure we have the latest game state
+      if (playerId === myPlayerId && ws.isConnected()) {
+        // Request game state to ensure all UI elements are properly restored
+        setTimeout(() => {
+          if (ws.isConnected()) {
+            ws.send({ type: 'getGameState' });
+          }
+        }, 100);
+      }
     });
 
     ws.on('opponentMove', (data: any) => {
@@ -473,6 +538,16 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
       }
       const play = evaluateHand(normalizedMove);
       const playerId = typeof data.player === 'string' ? parseInt(data.player, 10) : data.player;
+      
+      // If a previously disconnected player plays cards, they've reconnected
+      if (playerId && disconnectedPlayers.has(playerId)) {
+        setDisconnectedPlayers(prev => {
+          const newSet = new Set(prev);
+          newSet.delete(playerId);
+          return newSet;
+        });
+        console.log(`✅ Player ${playerId} appears to have reconnected (played cards)`);
+      }
       
       console.log('opponentMove: Player', playerId, 'played', normalizedMove.length, 'cards');
       
@@ -619,6 +694,15 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
 
     ws.on('opponentPass', (data: any) => {
       console.log('opponentPass received:', data);
+      // If a previously disconnected player passes, they may have reconnected
+      if (data.player && disconnectedPlayers.has(data.player)) {
+        setDisconnectedPlayers(prev => {
+          const newSet = new Set(prev);
+          newSet.delete(data.player);
+          return newSet;
+        });
+        console.log(`✅ Player ${data.player} appears to have reconnected (made a pass)`);
+      }
       if (data.resetLastPlay || data.shouldReset) {
         // Round reset - all players passed, clear lastPlay
         console.log('Round reset - all players passed, clearing lastPlay');
@@ -877,6 +961,22 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
         ? parseInt(data.playerId, 10) 
         : data.playerId;
       setMyPlayerId(playerId);
+      
+      // If reconnected during active game, show rejoin modal and remove from disconnected set
+      if (data.reconnected && gameStarted) {
+        setShowRejoinModal(true);
+        // Remove this player from disconnected set if they reconnected
+        setDisconnectedPlayers(prev => {
+          const newSet = new Set(prev);
+          newSet.delete(playerId);
+          return newSet;
+        });
+        // Immediately request game state to restore turn information and action buttons
+        if (ws.isConnected()) {
+          ws.send({ type: 'getGameState' });
+        }
+      }
+      
       // Request current player list after joining
       ws.send({ type: 'getSeatedPlayers' });
     });
@@ -1354,103 +1454,132 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
 
   return (
     <div className="min-h-screen relative overflow-hidden">
-      {/* Game Start Countdown Overlay */}
+      {/* Professional Game Start Countdown Overlay */}
       <AnimatePresence>
         {startCountdown !== null && startCountdown > 0 && (
           <motion.div
-            initial={{ opacity: 0, scale: 0.5 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.5 }}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
             className="fixed inset-0 z-[200] flex items-center justify-center pointer-events-none"
           >
-            <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
+            <div className="absolute inset-0 bg-black/70 backdrop-blur-md" />
             <motion.div
               key={startCountdown}
-              initial={{ scale: 0.5, opacity: 0 }}
-              animate={{ scale: [1.2, 1], opacity: [0.5, 1] }}
-              exit={{ scale: 0.5, opacity: 0 }}
+              initial={{ scale: 0.3, opacity: 0, rotateY: -180 }}
+              animate={{ 
+                scale: [1.3, 1, 1.1, 1], 
+                opacity: [0.3, 1, 1, 1],
+                rotateY: [0, 0, 360, 0],
+              }}
+              exit={{ scale: 0.3, opacity: 0, rotateY: 180 }}
+              transition={{ 
+                duration: 0.6,
+                ease: "easeOut"
+              }}
               className="relative z-10"
             >
-              <div className="text-[200px] font-bold font-orbitron text-[#FFD700] drop-shadow-[0_0_40px_rgba(255,215,0,0.8)]">
+              <div 
+                className="text-[220px] sm:text-[280px] font-bold font-orbitron text-[#FFD700] relative"
+                style={{
+                  textShadow: '0 0 60px rgba(255, 215, 0, 1), 0 0 100px rgba(255, 215, 0, 0.8), 0 0 150px rgba(255, 215, 0, 0.6), 0 8px 32px rgba(0, 0, 0, 0.8)',
+                  filter: 'drop-shadow(0 0 40px rgba(255, 215, 0, 0.9))',
+                }}
+              >
                 {startCountdown}
+                {/* Animated glow ring */}
+                <motion.div
+                  className="absolute inset-0 rounded-full"
+                  style={{
+                    background: 'radial-gradient(circle, rgba(255, 215, 0, 0.3) 0%, transparent 70%)',
+                    filter: 'blur(40px)',
+                  }}
+                  animate={{
+                    scale: [1, 1.5, 1],
+                    opacity: [0.5, 0.8, 0.5],
+                  }}
+                  transition={{ duration: 1, repeat: Infinity }}
+                />
               </div>
             </motion.div>
           </motion.div>
         )}
       </AnimatePresence>
 
-      {/* Royal Poker Table Background with Felt Texture */}
-      <div className="absolute inset-0">
-        {/* Base felt gradient */}
-        <div
-          className="absolute inset-0"
-          style={{
-            background: 'radial-gradient(ellipse at center, #1a5f2e 0%, #0d3d1f 40%, #051a0d 100%)',
-          }}
-        />
-        
-        {/* Felt texture overlay */}
-        <div
-          className="absolute inset-0 opacity-30"
-          style={{
-            backgroundImage: `
-              repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.03) 2px, rgba(0,0,0,0.03) 4px),
-              repeating-linear-gradient(90deg, transparent, transparent 2px, rgba(0,0,0,0.03) 2px, rgba(0,0,0,0.03) 4px),
-              radial-gradient(circle at 20% 30%, rgba(34, 197, 94, 0.1) 0%, transparent 50%),
-              radial-gradient(circle at 80% 70%, rgba(22, 163, 74, 0.1) 0%, transparent 50%)
-            `,
-            backgroundSize: '100% 100%, 100% 100%, 150% 150%, 150% 150%',
-          }}
-        />
-        
-        {/* Royal table border glow */}
-        <div
-          className="absolute inset-0"
-          style={{
-            boxShadow: 'inset 0 0 100px rgba(251, 191, 36, 0.1), inset 0 0 200px rgba(34, 197, 94, 0.05)',
-          }}
-        />
-        
-        {/* Animated light rays */}
+      {/* Professional Poker Table Background */}
+      <div className="absolute inset-0 bg-gradient-to-br from-gray-900 via-gray-800 to-black">
+        {/* Subtle ambient lighting */}
         <motion.div
           className="absolute inset-0 pointer-events-none"
           animate={{
-            background: [
-              'radial-gradient(circle at 30% 30%, rgba(251, 191, 36, 0.05) 0%, transparent 50%)',
-              'radial-gradient(circle at 70% 70%, rgba(251, 191, 36, 0.05) 0%, transparent 50%)',
-              'radial-gradient(circle at 30% 30%, rgba(251, 191, 36, 0.05) 0%, transparent 50%)',
-            ],
+            opacity: [0.3, 0.5, 0.3],
           }}
-          transition={{ duration: 8, repeat: Infinity }}
+          transition={{ duration: 6, repeat: Infinity }}
+          style={{
+            background: 'radial-gradient(ellipse at 50% 50%, rgba(59, 130, 246, 0.1) 0%, transparent 70%)',
+          }}
         />
       </div>
       
-      {/* Royal Table Surface */}
+      {/* Professional Poker Table Surface with Wide Black Border */}
       <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-        <motion.div 
-          className="w-[90%] h-[80%] rounded-full border-8 shadow-2xl relative overflow-hidden"
+        {/* Outer black border - wide and prominent */}
+        <div 
+          className="w-[92%] h-[82%] rounded-full absolute"
           style={{
-            background: 'radial-gradient(circle at 30% 30%, #3D7C47 0%, #2D5F3F 30%, #1A4D2E 60%, #0D2818 100%)',
-            borderColor: '#fbbf24',
-            boxShadow: '0 0 60px rgba(251, 191, 36, 0.4), inset 0 0 100px rgba(0, 0, 0, 0.3), 0 20px 60px rgba(0, 0, 0, 0.5)',
+            background: '#000000',
+            boxShadow: '0 0 0 20px #000000, 0 0 0 24px rgba(0, 0, 0, 0.8), 0 20px 80px rgba(0, 0, 0, 0.8), inset 0 0 0 2px rgba(255, 255, 255, 0.1)',
           }}
-          animate={{
-            boxShadow: [
-              '0 0 60px rgba(251, 191, 36, 0.4), inset 0 0 100px rgba(0, 0, 0, 0.3), 0 20px 60px rgba(0, 0, 0, 0.5)',
-              '0 0 80px rgba(251, 191, 36, 0.6), inset 0 0 100px rgba(0, 0, 0, 0.3), 0 20px 60px rgba(0, 0, 0, 0.5)',
-              '0 0 60px rgba(251, 191, 36, 0.4), inset 0 0 100px rgba(0, 0, 0, 0.3), 0 20px 60px rgba(0, 0, 0, 0.5)',
-            ],
+        />
+        
+        {/* Main table surface - dull blue felt */}
+        <motion.div 
+          className="w-[90%] h-[80%] rounded-full relative overflow-hidden"
+          style={{
+            background: 'radial-gradient(circle at 30% 30%, #4a6fa5 0%, #3d5a80 25%, #2d4a6b 50%, #1e3a5f 75%, #0f2a4a 100%)',
+            boxShadow: 'inset 0 0 120px rgba(0, 0, 0, 0.4), inset 0 0 60px rgba(0, 0, 0, 0.2), 0 0 0 20px #000000',
           }}
-          transition={{ duration: 4, repeat: Infinity }}
         >
-          {/* Inner table glow */}
-          <div className="absolute inset-4 rounded-full" style={{
-            boxShadow: 'inset 0 0 80px rgba(251, 191, 36, 0.15)',
-          }} />
+          {/* Realistic felt texture overlay */}
+          <div
+            className="absolute inset-0 opacity-40"
+            style={{
+              backgroundImage: `
+                repeating-linear-gradient(0deg, transparent, transparent 1px, rgba(0,0,0,0.05) 1px, rgba(0,0,0,0.05) 2px),
+                repeating-linear-gradient(90deg, transparent, transparent 1px, rgba(0,0,0,0.05) 1px, rgba(0,0,0,0.05) 2px),
+                repeating-linear-gradient(45deg, transparent, transparent 2px, rgba(255,255,255,0.02) 2px, rgba(255,255,255,0.02) 4px),
+                radial-gradient(circle at 25% 25%, rgba(100, 150, 200, 0.15) 0%, transparent 40%),
+                radial-gradient(circle at 75% 75%, rgba(80, 130, 180, 0.15) 0%, transparent 40%)
+              `,
+              backgroundSize: '100% 100%, 100% 100%, 200% 200%, 150% 150%, 150% 150%',
+            }}
+          />
           
-          {/* Decorative center pattern */}
-          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-32 h-32 rounded-full opacity-10" style={{
-            background: 'radial-gradient(circle, rgba(251, 191, 36, 0.3) 0%, transparent 70%)',
+          {/* Subtle light reflection on felt */}
+          <motion.div
+            className="absolute inset-0 pointer-events-none"
+            animate={{
+              background: [
+                'radial-gradient(circle at 30% 30%, rgba(150, 200, 255, 0.08) 0%, transparent 50%)',
+                'radial-gradient(circle at 70% 70%, rgba(150, 200, 255, 0.08) 0%, transparent 50%)',
+                'radial-gradient(circle at 30% 30%, rgba(150, 200, 255, 0.08) 0%, transparent 50%)',
+              ],
+            }}
+            transition={{ duration: 10, repeat: Infinity }}
+          />
+          
+          {/* Inner rim highlight */}
+          <div 
+            className="absolute inset-2 rounded-full pointer-events-none"
+            style={{
+              boxShadow: 'inset 0 0 40px rgba(0, 0, 0, 0.3), inset 0 0 0 1px rgba(255, 255, 255, 0.05)',
+            }}
+          />
+          
+          {/* Center dealer area - subtle */}
+          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-40 h-40 rounded-full opacity-5" style={{
+            background: 'radial-gradient(circle, rgba(255, 255, 255, 0.2) 0%, transparent 70%)',
+            boxShadow: 'inset 0 0 60px rgba(0, 0, 0, 0.3)',
           }} />
         </motion.div>
       </div>
@@ -1458,69 +1587,98 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
       {/* Players */}
       {gameStarted && seatedPlayers.length > 0 && (
         <div className="absolute inset-0">
-          {seatedPlayers.map((player, idx) => {
-            const playerId = player.playerId;
-            const isCurrent = currentPlayer === playerId;
-            const isMe = playerId === myPlayerId;
-            // Calculate card count - ensure it's always a number and displayed
-            // For all players, prefer opponentCardCounts (from backend) if available
-            // This ensures other players see the correct count for me
-            // For myself, fallback to playerHand.length if count not available
-            const cardCount = opponentCardCounts[playerId] !== undefined 
-              ? opponentCardCounts[playerId]
-              : (playerId !== myPlayerId
-                  ? (player.cardCount !== undefined && player.cardCount !== null
-                      ? player.cardCount 
-                      : (gameStarted ? 13 : 0)) // Default to 13 if game started, 0 otherwise
-                  : playerHand.length); // For myself, use actual hand length as fallback
-            const points = playerPoints[playerId] ?? 0;
-            const isEliminated = points >= 30;
-            const lastPlayedCards = playerLastPlayedCards[playerId] || [];
-            const hasOneCard = cardCount === 1;
-            
-            // Check if only one player remains (has cards > 0)
-            const playersWithCards = seatedPlayers.filter(p => {
-              const pid = p.playerId;
+          {(() => {
+            // Sort players by playerId to get consistent ordering for avatar assignment
+            const sortedPlayers = [...seatedPlayers].sort((a, b) => a.playerId - b.playerId);
+            return sortedPlayers.map((player, idx) => {
+              const playerId = player.playerId;
+              const isCurrent = currentPlayer === playerId;
+              const isMe = playerId === myPlayerId;
+              // Calculate card count - ensure it's always a number and displayed
               // For all players, prefer opponentCardCounts (from backend) if available
-              const count = opponentCardCounts[pid] !== undefined 
-                ? opponentCardCounts[pid]
-                : (pid !== myPlayerId
-                    ? (p.cardCount !== undefined ? p.cardCount : 0)
-                    : playerHand.length);
-              return count > 0;
-            });
-            const onlyOnePlayerRemains = playersWithCards.length === 1;
-            const isLastPlayerRemaining = onlyOnePlayerRemains && playersWithCards[0]?.playerId === playerId;
-            // Get avatar URL - check multiple possible fields and ensure it's a valid URL
-            let avatarUrl = player.avatar_url || player.avatarUrl || '';
-            // Clean up avatar URL - remove any whitespace and validate
-            if (avatarUrl && typeof avatarUrl === 'string') {
-              avatarUrl = avatarUrl.trim();
-              // If it's not a valid URL (doesn't start with http/https/data), treat as empty
-              if (avatarUrl && !avatarUrl.startsWith('http://') && !avatarUrl.startsWith('https://') && !avatarUrl.startsWith('data:')) {
-                console.warn('Invalid avatar URL format for player', playerId, avatarUrl);
+              // This ensures other players see the correct count for me
+              // For myself, fallback to playerHand.length if count not available
+              const cardCount = opponentCardCounts[playerId] !== undefined 
+                ? opponentCardCounts[playerId]
+                : (playerId !== myPlayerId
+                    ? (player.cardCount !== undefined && player.cardCount !== null
+                        ? player.cardCount 
+                        : (gameStarted ? 13 : 0)) // Default to 13 if game started, 0 otherwise
+                    : playerHand.length); // For myself, use actual hand length as fallback
+              const points = playerPoints[playerId] ?? 0;
+              const isEliminated = points >= 30;
+              const lastPlayedCards = playerLastPlayedCards[playerId] || [];
+              const hasOneCard = cardCount === 1;
+              
+              // Check if only one player remains (has cards > 0)
+              const playersWithCards = seatedPlayers.filter(p => {
+                const pid = p.playerId;
+                // For all players, prefer opponentCardCounts (from backend) if available
+                const count = opponentCardCounts[pid] !== undefined 
+                  ? opponentCardCounts[pid]
+                  : (pid !== myPlayerId
+                      ? (p.cardCount !== undefined ? p.cardCount : 0)
+                      : playerHand.length);
+                return count > 0;
+              });
+              const onlyOnePlayerRemains = playersWithCards.length === 1;
+              const isLastPlayerRemaining = onlyOnePlayerRemains && playersWithCards[0]?.playerId === playerId;
+              const isDisconnected = disconnectedPlayers.has(playerId);
+              // Get avatar URL - check multiple possible fields and ensure it's a valid URL
+              let avatarUrl = player.avatar_url || player.avatarUrl || '';
+              // Clean up avatar URL - remove any whitespace and validate
+              if (avatarUrl && typeof avatarUrl === 'string') {
+                avatarUrl = avatarUrl.trim();
+                // If it's not a valid URL (doesn't start with http/https/data), treat as empty
+                if (avatarUrl && !avatarUrl.startsWith('http://') && !avatarUrl.startsWith('https://') && !avatarUrl.startsWith('data:')) {
+                  console.warn('Invalid avatar URL format for player', playerId, avatarUrl);
+                  avatarUrl = '';
+                }
+              } else {
                 avatarUrl = '';
               }
-            } else {
-              avatarUrl = '';
-            }
-            const displayName = player.displayName || player.username || `Player ${playerId}`;
-            const playerUserId = player.userId || player.user_id || null;
-            const pokerAvatar = getPokerAvatar(playerUserId, avatarUrl, displayName);
-            const avatarGradient = getAvatarGradient(playerUserId);
-            const formattedUserId = formatUserId(playerUserId);
+              const displayName = player.displayName || player.username || `Player ${playerId}`;
+              const playerUserId = player.userId || player.user_id || null;
+              const pokerAvatar = getPokerAvatar(playerUserId, avatarUrl, displayName);
+              const avatarGradient = getAvatarGradient(playerUserId);
+              const formattedUserId = formatUserId(playerUserId);
+              
+              // Get the default avatar path based on player index and total player count
+              const defaultAvatarPath = getAvatarPath(idx, sortedPlayers.length);
 
-            // Improved positioning for mobile to avoid overlaps
-            let position = 'top-4 sm:top-10 left-1/2 -translate-x-1/2';
-            if (idx === 1) {
-              position = 'top-12 sm:top-20 right-2 sm:right-10';
-            }
-            if (idx === 2) {
-              position = 'bottom-24 sm:bottom-10 left-2 sm:left-10';
-            }
-            if (idx === 3) {
-              position = 'top-12 sm:top-20 left-2 sm:left-10';
-            }
+            // Calculate positions relative to myPlayerId
+            // Each player always sees themselves at bottom left
+            const getRelativePosition = (pid: number) => {
+              if (!myPlayerId) return 'top-4 sm:top-10 left-1/2 -translate-x-1/2';
+              
+              // If this is me, always return bottom left position
+              if (pid === myPlayerId) {
+                return 'bottom-24 sm:bottom-10 left-2 sm:left-10';
+              }
+              
+              // Calculate relative position based on playerId difference
+              // My position (myPlayerId) is always bottom left
+              // Other players are positioned in join order: top center, top right, top left
+              const diff = pid - myPlayerId;
+              
+              // Normalize to 0-3 range (4 players max)
+              const relativePosition = ((diff % 4) + 4) % 4;
+              
+              switch (relativePosition) {
+                case 0: // Me - bottom left (shouldn't reach here due to check above, but keep for safety)
+                  return 'bottom-24 sm:bottom-10 left-2 sm:left-10';
+                case 1: // Next player (myPlayerId + 1) - top center
+                  return 'top-4 sm:top-10 left-1/2 -translate-x-1/2';
+                case 2: // Second next (myPlayerId + 2) - top right
+                  return 'top-12 sm:top-20 right-2 sm:right-10';
+                case 3: // Third next (myPlayerId + 3) - top left
+                  return 'top-12 sm:top-20 left-2 sm:left-10';
+                default:
+                  return 'top-4 sm:top-10 left-1/2 -translate-x-1/2';
+              }
+            };
+            
+            const position = getRelativePosition(playerId);
 
             // Calculate timer progress (0 to 1)
             const timerProgress = remainingTime / 15;
@@ -1531,132 +1689,245 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
                 {/* Player Avatar with Timer Indicator */}
                 <div className={`absolute ${position} z-40`}>
                   <div className="relative w-12 h-12 sm:w-16 sm:h-16">
-                    {/* Timer Circle Indicator - only for current player or me */}
+                    {/* Professional Timer Circle Indicator - only for current player or me */}
                     {(showTimer || isMe) && (
                       <svg 
                         className="absolute inset-0 w-full h-full -rotate-90"
                         style={{ 
-                          filter: showTimer ? 'drop-shadow(0 0 8px rgba(255, 193, 7, 0.8))' : 'none',
+                          filter: showTimer ? 'drop-shadow(0 0 12px rgba(255, 193, 7, 0.9)) drop-shadow(0 0 24px rgba(255, 193, 7, 0.5))' : 'none',
                           zIndex: 41
                         }}
                         viewBox="0 0 64 64"
                         preserveAspectRatio="xMidYMid meet"
                       >
-                        {/* Background circle */}
+                        {/* Outer glow ring */}
+                        {showTimer && (
+                          <circle
+                            cx="32"
+                            cy="32"
+                            r="32"
+                            fill="none"
+                            stroke={remainingTime <= 5 ? 'rgba(255, 71, 87, 0.3)' : 'rgba(255, 193, 7, 0.2)'}
+                            strokeWidth="1"
+                            className="animate-pulse"
+                          />
+                        )}
+                        {/* Background circle with gradient effect */}
                         <circle
                           cx="32"
                           cy="32"
                           r="30"
                           fill="none"
-                          stroke={isMe ? 'rgba(59, 130, 246, 0.3)' : 'rgba(255, 193, 7, 0.2)'}
-                          strokeWidth="3"
+                          stroke={isMe ? 'rgba(59, 130, 246, 0.25)' : 'rgba(0, 0, 0, 0.4)'}
+                          strokeWidth="4"
                         />
-                        {/* Timer progress circle */}
+                        {/* Timer progress circle with animated glow - blue theme */}
                         {showTimer && (
-                          <circle
-                            cx="32"
-                            cy="32"
-                            r="30"
-                            fill="none"
-                            stroke={remainingTime <= 5 ? '#FF4757' : '#FFC107'}
-                            strokeWidth="3"
-                            strokeLinecap="round"
-                            strokeDasharray={`${2 * Math.PI * 30}`}
-                            strokeDashoffset={`${2 * Math.PI * 30 * (1 - timerProgress)}`}
-                            className="transition-all duration-1000"
-                          />
+                          <>
+                            <defs>
+                              <linearGradient id={`timer-gradient-${playerId}`} x1="0%" y1="0%" x2="100%" y2="100%">
+                                <stop offset="0%" stopColor={remainingTime <= 5 ? '#FF4757' : '#3B82F6'} stopOpacity="1" />
+                                <stop offset="100%" stopColor={remainingTime <= 5 ? '#FF6B7A' : '#60A5FA'} stopOpacity="0.9" />
+                              </linearGradient>
+                            </defs>
+                            <circle
+                              cx="32"
+                              cy="32"
+                              r="30"
+                              fill="none"
+                              stroke={`url(#timer-gradient-${playerId})`}
+                              strokeWidth="4"
+                              strokeLinecap="round"
+                              strokeDasharray={`${2 * Math.PI * 30}`}
+                              strokeDashoffset={`${2 * Math.PI * 30 * (1 - timerProgress)}`}
+                              className="transition-all duration-1000 ease-linear"
+                              style={{
+                                filter: remainingTime <= 5 
+                                  ? 'drop-shadow(0 0 8px rgba(255, 71, 87, 0.8))'
+                                  : 'drop-shadow(0 0 8px rgba(59, 130, 246, 0.7))',
+                              }}
+                            />
+                            {/* Pulsing inner ring for urgency */}
+                            {remainingTime <= 5 && (
+                              <motion.circle
+                                cx="32"
+                                cy="32"
+                                r="28"
+                                fill="none"
+                                stroke="#FF4757"
+                                strokeWidth="2"
+                                strokeOpacity="0.5"
+                                animate={{
+                                  scale: [1, 1.1, 1],
+                                  opacity: [0.5, 0.8, 0.5],
+                                }}
+                                transition={{ duration: 0.8, repeat: Infinity }}
+                              />
+                            )}
+                          </>
                         )}
-                        {/* My player indicator (blue border) */}
+                        {/* My player indicator (blue border with glow) */}
                         {isMe && !showTimer && (
-                          <circle
+                          <motion.circle
                             cx="32"
                             cy="32"
                             r="31"
                             fill="none"
                             stroke="#3B82F6"
-                            strokeWidth="2.5"
-                            className="animate-pulse"
+                            strokeWidth="3"
+                            animate={{
+                              opacity: [0.6, 1, 0.6],
+                            }}
+                            transition={{ duration: 2, repeat: Infinity }}
+                            style={{
+                              filter: 'drop-shadow(0 0 8px rgba(59, 130, 246, 0.6))',
+                            }}
                           />
                         )}
                       </svg>
                     )}
-                    {/* Royal Avatar */}
+                    {/* Professional Poker Avatar with Enhanced Styling */}
                     <div
-                      className={`w-full h-full rounded-full flex items-center justify-center text-white font-bold text-lg sm:text-2xl border-2 sm:border-3 overflow-hidden relative ${
+                      className={`w-full h-full rounded-full flex items-center justify-center text-white font-bold text-lg sm:text-2xl border-3 sm:border-4 overflow-hidden relative ${
                         (isLastPlayerRemaining && !isMe) || (hasOneCard && !isMe)
-                          ? 'border-[#FF4757] shadow-lg shadow-[#FF4757]/50 animate-pulse'
+                          ? 'border-[#FF4757] shadow-xl shadow-[#FF4757]/70 animate-pulse'
                           : isCurrent && !isEliminated
-                          ? 'border-[#FFC107] shadow-lg shadow-[#FFC107]/50'
+                          ? 'border-[#3B82F6] shadow-xl shadow-[#3B82F6]/70'
                           : isMe
-                          ? 'border-[#3B82F6] shadow-lg shadow-[#3B82F6]/50'
-                          : 'border-white/30'
+                          ? 'border-[#3B82F6] shadow-xl shadow-[#3B82F6]/80'
+                          : 'border-[#1e3a5f]/60'
                       }`}
                       style={{
-                        background: avatarUrl 
-                          ? 'transparent'
-                          : avatarGradient,
-                        borderWidth: '3px',
-                        boxShadow: isCurrent && !isEliminated
-                          ? '0 0 20px rgba(255, 193, 7, 0.6), inset 0 0 20px rgba(255, 255, 255, 0.1)'
+                        background: avatarGradient, // Always show gradient as fallback
+                        borderWidth: '4px',
+                        minHeight: '100%',
+                        minWidth: '100%',
+                        boxShadow: (isLastPlayerRemaining && !isMe) || (hasOneCard && !isMe)
+                          ? '0 0 30px rgba(255, 71, 87, 0.8), 0 8px 24px rgba(255, 71, 87, 0.5), inset 0 0 20px rgba(255, 255, 255, 0.15)'
+                          : isCurrent && !isEliminated
+                          ? '0 0 35px rgba(59, 130, 246, 0.9), 0 0 60px rgba(59, 130, 246, 0.5), 0 8px 24px rgba(0, 0, 0, 0.6), inset 0 0 20px rgba(255, 255, 255, 0.15)'
                           : isMe
-                          ? '0 0 20px rgba(59, 130, 246, 0.5), inset 0 0 20px rgba(255, 255, 255, 0.1)'
-                          : '0 4px 12px rgba(0, 0, 0, 0.2)',
+                          ? '0 0 30px rgba(59, 130, 246, 0.8), 0 0 50px rgba(59, 130, 246, 0.4), 0 6px 20px rgba(0, 0, 0, 0.5), inset 0 0 20px rgba(255, 255, 255, 0.12)'
+                          : '0 4px 16px rgba(0, 0, 0, 0.6), inset 0 0 10px rgba(59, 130, 246, 0.1)',
                       }}
                     >
-                      {avatarUrl && avatarUrl.trim() !== '' ? (
+                      {/* Always show default avatar first, then try to overlay custom avatar if available */}
+                      <img 
+                        src={defaultAvatarPath} 
+                        alt={displayName}
+                        className="w-full h-full object-cover rounded-full absolute inset-0 z-10"
+                        onError={(e) => {
+                          // If default avatar fails, show gradient background with first letter
+                          const target = e.target as HTMLImageElement;
+                          target.style.display = 'none';
+                          const parent = target.parentElement;
+                          if (parent) {
+                            const existingFallback = parent.querySelector('span.fallback-avatar');
+                            if (existingFallback) {
+                              existingFallback.remove();
+                            }
+                            const fallback = document.createElement('span');
+                            fallback.className = 'fallback-avatar drop-shadow-lg text-2xl font-bold text-white absolute inset-0 flex items-center justify-center z-10';
+                            fallback.textContent = pokerAvatar;
+                            parent.appendChild(fallback);
+                          }
+                        }}
+                        onLoad={() => {
+                          // Default avatar loaded successfully
+                          console.log('Default avatar loaded successfully for player', playerId, defaultAvatarPath);
+                        }}
+                      />
+                      {/* Overlay custom avatar if available and valid */}
+                      {avatarUrl && avatarUrl.trim() !== '' && (
                         <img 
                           src={avatarUrl} 
                           alt={displayName}
-                          className="w-full h-full object-cover rounded-full"
+                          className="w-full h-full object-cover rounded-full absolute inset-0 z-20"
                           onError={(e) => {
-                            // If image fails to load, show first letter as fallback
+                            // If custom avatar fails, just hide it and show default avatar
                             const target = e.target as HTMLImageElement;
                             target.style.display = 'none';
-                            const parent = target.parentElement;
-                            if (parent) {
-                              // Remove any existing fallback
-                              const existingFallback = parent.querySelector('span');
-                              if (existingFallback) {
-                                existingFallback.remove();
-                              }
-                              // Add new fallback with first letter
-                              const fallback = document.createElement('span');
-                              fallback.className = 'drop-shadow-lg text-2xl font-bold text-white';
-                              fallback.textContent = pokerAvatar;
-                              parent.appendChild(fallback);
-                            }
+                            console.log('Custom avatar failed to load for player', playerId, 'showing default avatar');
                           }}
                           onLoad={() => {
                             // Image loaded successfully
-                            console.log('Avatar loaded successfully for player', playerId, avatarUrl);
+                            console.log('Custom avatar loaded successfully for player', playerId, avatarUrl);
                           }}
                         />
-                      ) : (
-                        <span className="drop-shadow-lg text-2xl font-bold text-white">
-                          {pokerAvatar}
-                        </span>
                       )}
-                      {/* Royal crown for current player */}
+                      {/* WiFi Disconnected Icon Overlay - shown when player quits during game */}
+                      {isDisconnected && !isMe && (
+                        <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/50 rounded-full backdrop-blur-sm">
+                          <div className="relative flex items-center justify-center">
+                            <MdSignalWifiOff 
+                              className="text-red-500 text-2xl sm:text-3xl drop-shadow-lg"
+                              style={{
+                                filter: 'drop-shadow(0 0 8px rgba(239, 68, 68, 0.8))',
+                              }}
+                            />
+                            {/* Pulsing animation for disconnected indicator */}
+                            <motion.div
+                              className="absolute inset-0 rounded-full bg-red-500/20"
+                              animate={{
+                                scale: [1, 1.2, 1],
+                                opacity: [0.5, 0.8, 0.5],
+                              }}
+                              transition={{ duration: 1.5, repeat: Infinity }}
+                            />
+                          </div>
+                        </div>
+                      )}
+                      {/* Royal crown for current player - positioned above avatar, higher up to not cover face */}
                       {isCurrent && !isEliminated && (
-                        <div className="absolute -top-1 left-1/2 -translate-x-1/2 text-yellow-400 text-lg drop-shadow-lg">
+                        <div className="absolute -top-6 sm:-top-8 left-1/2 -translate-x-1/2 z-50 text-yellow-400 text-lg sm:text-xl drop-shadow-lg pointer-events-none">
                           👑
                         </div>
                       )}
                     </div>
-                    {/* Timer text overlay for current player */}
+                    {/* Professional Timer text overlay for current player with blue theme */}
                     {showTimer && (
-                      <div className="absolute -bottom-6 left-1/2 -translate-x-1/2 z-50">
-                        <div className="px-2 py-1 bg-black/70 rounded text-white text-xs font-bold">
-                          {remainingTime}s
+                      <motion.div 
+                        className="absolute -bottom-7 left-1/2 -translate-x-1/2 z-50"
+                        animate={{
+                          scale: remainingTime <= 5 ? [1, 1.1, 1] : 1,
+                        }}
+                        transition={{ duration: 0.5, repeat: remainingTime <= 5 ? Infinity : 0 }}
+                      >
+                        <div 
+                          className="px-3 py-1.5 rounded-lg text-white text-sm font-bold font-orbitron relative overflow-hidden"
+                          style={{
+                            background: remainingTime <= 5
+                              ? 'linear-gradient(135deg, #FF4757 0%, #FF3838 100%)'
+                              : 'linear-gradient(135deg, rgba(15, 42, 74, 0.95) 0%, rgba(30, 58, 95, 0.9) 100%)',
+                            border: `2px solid ${remainingTime <= 5 ? '#FF6B7A' : 'rgba(59, 130, 246, 0.7)'}`,
+                            boxShadow: remainingTime <= 5
+                              ? '0 0 20px rgba(255, 71, 87, 0.8), 0 4px 12px rgba(0, 0, 0, 0.5)'
+                              : '0 0 20px rgba(59, 130, 246, 0.6), 0 4px 12px rgba(0, 0, 0, 0.6)',
+                            textShadow: '0 0 10px rgba(224, 231, 255, 0.8)',
+                          }}
+                        >
+                          {remainingTime <= 5 && (
+                            <motion.div
+                              className="absolute inset-0"
+                              style={{
+                                background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent)',
+                              }}
+                              animate={{
+                                x: ['-100%', '200%'],
+                              }}
+                              transition={{ duration: 0.8, repeat: Infinity, ease: "linear" }}
+                            />
+                          )}
+                          <span className="relative z-10">{remainingTime}s</span>
                         </div>
-                      </div>
+                      </motion.div>
                     )}
                   </div>
                 </div>
                 {/* Player Info with Last Played Cards - Container */}
                 <div className={`absolute ${position} z-30`} style={{ 
-                  [idx === 2 ? 'bottom' : 'top']: idx === 2 ? 'calc(4rem + 80px)' : 'calc(4rem + 80px)',
-                  [idx === 2 ? 'top' : 'bottom']: 'auto'
+                  [isMe ? 'bottom' : 'top']: isMe ? 'calc(4rem + 80px)' : 'calc(4rem + 80px)',
+                  [isMe ? 'top' : 'bottom']: 'auto'
                 }}>
                   <div className="relative flex items-center gap-1 sm:gap-2">
                     {/* Last Played Cards - Left side (for right-positioned players) */}
@@ -1669,15 +1940,22 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
                         ))}
                       </div>
                     )}
-                    {/* Player Info Box */}
+                    {/* Professional Player Info Box with blue/black theme */}
                     <div
-                      className={`p-2 sm:p-3 rounded-lg border-2 transition-all backdrop-blur-sm ${
+                      className={`p-2.5 sm:p-3.5 rounded-xl border-2 transition-all backdrop-blur-md ${
                         hasOneCard && !isMe && !isEliminated
-                          ? 'border-[#FF4757] bg-[#FF4757]/40 shadow-lg shadow-[#FF4757]/50 animate-pulse'
+                          ? 'border-[#FF4757] bg-gradient-to-br from-[#FF4757]/50 to-[#FF3838]/40 shadow-xl shadow-[#FF4757]/60 animate-pulse'
                           : isCurrent && !isEliminated
-                          ? 'border-[#00C896] bg-[#00C896]/30 shadow-lg shadow-[#00C896]/50'
-                          : 'border-white/20 bg-black/50'
+                          ? 'border-[#3B82F6] bg-gradient-to-br from-[#1e3a5f]/80 to-[#0f2a4a]/70 shadow-xl shadow-[#3B82F6]/60'
+                          : 'border-[#1e3a5f]/50 bg-gradient-to-br from-black/80 to-[#0f2a4a]/70'
                       }`}
+                      style={{
+                        boxShadow: hasOneCard && !isMe && !isEliminated
+                          ? '0 8px 32px rgba(255, 71, 87, 0.6), inset 0 1px 2px rgba(255, 255, 255, 0.2)'
+                          : isCurrent && !isEliminated
+                          ? '0 8px 32px rgba(59, 130, 246, 0.6), 0 0 20px rgba(59, 130, 246, 0.3), inset 0 1px 2px rgba(255, 255, 255, 0.15)'
+                          : '0 4px 16px rgba(0, 0, 0, 0.6), inset 0 1px 1px rgba(59, 130, 246, 0.1)',
+                      }}
                     >
                       <p className="text-white text-[10px] sm:text-xs font-bold font-orbitron truncate max-w-[80px] sm:max-w-none">
                         {displayName}
@@ -1685,15 +1963,38 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
                       {playerUserId && (
                         <p className="text-[#00C896] text-[9px] sm:text-[10px] font-orbitron">ID: {formattedUserId}</p>
                       )}
-                      {/* Always show card count - use 0 if not available, but show it */}
-                      <p className={`text-[10px] sm:text-xs font-bold ${hasOneCard && !isMe && !isEliminated ? 'text-[#FF4757] animate-pulse' : 'text-[#FFD700]'}`}>
-                        Карт: {cardCount > 0 ? cardCount : 0}
-                        {hasOneCard && !isMe && !isEliminated && ' ⚠️'}
-                      </p>
-                      <p className="text-white/90 text-[10px] sm:text-xs font-semibold">Оноо: {points}</p>
-                      {isEliminated && <p className="text-[#FF4757] text-[10px] sm:text-xs font-bold">OUT</p>}
+                      {/* Card count with icon */}
+                      <div className="flex items-center gap-1.5">
+                        <svg className="w-3 h-3 sm:w-4 sm:h-4 text-[#3B82F6]" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        <p className={`text-[10px] sm:text-xs font-bold ${hasOneCard && !isMe && !isEliminated ? 'text-[#FF4757] animate-pulse' : 'text-[#60A5FA]'}`}>
+                          {cardCount > 0 ? cardCount : 0}
+                          {hasOneCard && !isMe && !isEliminated && ' ⚠️'}
+                        </p>
+                      </div>
+                      {/* Points with icon */}
+                      <div className="flex items-center gap-1.5">
+                        <svg className="w-3 h-3 sm:w-4 sm:h-4 text-[#3B82F6]" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                        </svg>
+                        <p className="text-white/90 text-[10px] sm:text-xs font-semibold">{points}</p>
+                      </div>
+                      {isEliminated && (
+                        <div className="flex items-center gap-1.5">
+                          <svg className="w-3 h-3 sm:w-4 sm:h-4 text-[#FF4757]" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                          </svg>
+                          <p className="text-[#FF4757] text-[10px] sm:text-xs font-bold">OUT</p>
+                        </div>
+                      )}
                       {hasOneCard && !isMe && (
-                        <p className="text-[#FF4757] text-[9px] sm:text-xs font-bold animate-pulse">1 КАРТ ҮЛДЛЭЭ!</p>
+                        <div className="flex items-center gap-1.5">
+                          <svg className="w-3 h-3 sm:w-4 sm:h-4 text-[#FF4757] animate-pulse" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                          </svg>
+                          <p className="text-[#FF4757] text-[9px] sm:text-xs font-bold animate-pulse">1 КАРТ ҮЛДЛЭЭ!</p>
+                        </div>
                       )}
                     </div>
                     {/* Last Played Cards - Right side (for left/center positioned players) */}
@@ -1710,38 +2011,46 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
                 </div>
               </div>
             );
-          })}
+            });
+          })()}
         </div>
       )}
 
-      {/* Last Play Cards - Center Display with Royal Styling */}
+      {/* Last Play Cards - Professional Center Display */}
       {gameStarted && lastPlay && lastPlay.cards && lastPlay.cards.length > 0 && (
         <motion.div 
-          className="absolute top-1/4 left-1/2 -translate-x-1/2 z-30 flex flex-col items-center gap-3"
-          initial={{ opacity: 0, scale: 0.8, y: -20 }}
+          className="absolute top-1/4 left-1/2 -translate-x-1/2 z-30 flex flex-col items-center gap-4"
+          initial={{ opacity: 0, scale: 0.6, y: -30 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}
-          transition={{ type: "spring", stiffness: 200, damping: 20 }}
+          transition={{ 
+            type: "spring", 
+            stiffness: 300, 
+            damping: 25,
+            mass: 0.8
+          }}
         >
-          {/* Hand Rank Label with Royal Glow */}
+          {/* Professional Hand Rank Label with blue/black theme */}
           {lastPlay.rank && lastPlay.rank !== 'Invalid' && (
             <motion.div 
-              className="px-6 py-3 rounded-full shadow-2xl relative overflow-hidden"
+              className="px-8 py-3.5 rounded-full shadow-2xl relative overflow-hidden"
               style={{
-                background: 'linear-gradient(135deg, #fbbf24 0%, #f59e0b 50%, #d97706 100%)',
-                boxShadow: '0 8px 24px rgba(251, 191, 36, 0.6), 0 0 40px rgba(251, 191, 36, 0.4)',
+                background: 'linear-gradient(135deg, #3b82f6 0%, #2563eb 50%, #1e40af 100%)',
+                border: '2px solid rgba(59, 130, 246, 0.6)',
+                boxShadow: '0 8px 32px rgba(59, 130, 246, 0.7), 0 0 60px rgba(59, 130, 246, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.2)',
               }}
               animate={{
                 boxShadow: [
-                  '0 8px 24px rgba(251, 191, 36, 0.6), 0 0 40px rgba(251, 191, 36, 0.4)',
-                  '0 8px 32px rgba(251, 191, 36, 0.8), 0 0 60px rgba(251, 191, 36, 0.6)',
-                  '0 8px 24px rgba(251, 191, 36, 0.6), 0 0 40px rgba(251, 191, 36, 0.4)',
+                  '0 8px 32px rgba(59, 130, 246, 0.7), 0 0 60px rgba(59, 130, 246, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.2)',
+                  '0 10px 40px rgba(59, 130, 246, 0.9), 0 0 80px rgba(59, 130, 246, 0.7), inset 0 1px 0 rgba(255, 255, 255, 0.25)',
+                  '0 8px 32px rgba(59, 130, 246, 0.7), 0 0 60px rgba(59, 130, 246, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.2)',
                 ],
+                scale: [1, 1.02, 1],
               }}
-              transition={{ duration: 2, repeat: Infinity }}
+              transition={{ duration: 2.5, repeat: Infinity }}
             >
-              {/* Shimmer effect */}
+              {/* Animated shimmer effect */}
               <motion.div
-                className="absolute inset-0"
+                className="absolute inset-0 rounded-full"
                 style={{
                   background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.4), transparent)',
                 }}
@@ -1750,39 +2059,71 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
                 }}
                 transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
               />
-              <p className="text-white text-sm md:text-base font-bold font-orbitron relative z-10 drop-shadow-lg">
+              <p 
+                className="text-white text-base md:text-lg font-bold font-orbitron relative z-10 drop-shadow-lg"
+                style={{
+                  textShadow: '0 2px 8px rgba(0, 0, 0, 0.8), 0 0 15px rgba(224, 231, 255, 0.6)',
+                  letterSpacing: '1px',
+                }}
+              >
                 {lastPlay.rank}
               </p>
             </motion.div>
           )}
-          {/* Cards with elegant spread animation */}
-          <div className="flex gap-2 items-center justify-center">
+          {/* Cards with professional poker spread animation */}
+          <motion.div 
+            className="flex gap-3 items-center justify-center"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 0.2 }}
+          >
             {lastPlay.cards.map((card, idx) => (
               <motion.div
                 key={`center-${card.rank}-${card.suit}-${idx}`}
-                initial={{ opacity: 0, scale: 0.5, rotateY: -90 }}
-                animate={{ opacity: 1, scale: 1, rotateY: 0 }}
-                transition={{ 
-                  delay: idx * 0.1,
-                  type: "spring",
-                  stiffness: 200,
-                  damping: 20,
+                initial={{ 
+                  opacity: 0, 
+                  scale: 0.3, 
+                  rotateY: -180,
+                  y: -50,
+                  x: idx % 2 === 0 ? -30 : 30,
                 }}
-                whileHover={{ scale: 1.1, z: 20 }}
+                animate={{ 
+                  opacity: 1, 
+                  scale: 1, 
+                  rotateY: 0,
+                  y: 0,
+                  x: 0,
+                }}
+                transition={{ 
+                  delay: idx * 0.08,
+                  type: "spring",
+                  stiffness: 300,
+                  damping: 25,
+                  mass: 0.7,
+                }}
+                whileHover={{ 
+                  scale: 1.15, 
+                  y: -10,
+                  z: 30,
+                  transition: { duration: 0.2 }
+                }}
+                style={{
+                  filter: 'drop-shadow(0 8px 16px rgba(0, 0, 0, 0.4))',
+                }}
               >
                 <CardComponent card={card} />
               </motion.div>
             ))}
-          </div>
+          </motion.div>
         </motion.div>
       )}
 
-      {/* Player Hand */}
+      {/* Player Hand with Enhanced Display */}
       {gameStarted && (
         <div className="absolute bottom-20 sm:bottom-32 left-0 right-0 z-50 overflow-visible">
           {playerHand.length > 0 ? (
             <>
-              {/* Selection instructions with elegant animation */}
+              {/* Enhanced Selection instructions with blue theme */}
               {isMyTurn && selectedCards.length === 0 && (
                 <motion.div 
                   className="text-center mb-2 sm:mb-4 px-2"
@@ -1791,23 +2132,35 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
                   transition={{ delay: 0.3 }}
                 >
                   <motion.p 
-                    className="text-white/90 text-xs sm:text-sm md:text-base font-orbitron font-semibold"
+                    className="text-white/95 text-xs sm:text-sm md:text-base font-orbitron font-semibold"
                     animate={{
                       textShadow: [
-                        '0 0 10px rgba(251, 191, 36, 0.5)',
-                        '0 0 20px rgba(251, 191, 36, 0.8)',
-                        '0 0 10px rgba(251, 191, 36, 0.5)',
+                        '0 0 10px rgba(59, 130, 246, 0.6)',
+                        '0 0 20px rgba(59, 130, 246, 0.9)',
+                        '0 0 10px rgba(59, 130, 246, 0.6)',
                       ],
                     }}
                     transition={{ duration: 2, repeat: Infinity }}
+                    style={{
+                      color: '#e0e7ff',
+                    }}
                   >
                     ✨ Картуудыг сонгохын тулд дээр нь дараарай ✨
                   </motion.p>
                 </motion.div>
               )}
-              {/* Cards with elegant dealing animation */}
-              {/* Mobile: Stack cards with overlap, Web: Normal spacing */}
-              <div className="flex justify-center overflow-x-auto overflow-y-visible px-1 sm:px-2 md:px-4 pt-16 sm:pt-20 pb-4 sm:pb-6" style={{ minHeight: '240px', WebkitOverflowScrolling: 'touch' }}>
+              {/* Professional Poker Hand Cards with Enhanced Realistic Display */}
+              {/* Card hand container with beautiful backdrop */}
+              <div className="relative">
+                {/* Subtle backdrop glow for card area */}
+                <div 
+                  className="absolute inset-x-0 bottom-0 h-32 sm:h-40 rounded-t-[50px] opacity-30"
+                  style={{
+                    background: 'radial-gradient(ellipse at center top, rgba(59, 130, 246, 0.2) 0%, transparent 70%)',
+                    filter: 'blur(20px)',
+                  }}
+                />
+                <div className="flex justify-center overflow-x-auto overflow-y-visible px-1 sm:px-2 md:px-4 pt-16 sm:pt-20 pb-4 sm:pb-6 relative z-10" style={{ minHeight: '240px', WebkitOverflowScrolling: 'touch' }}>
                 <div className="relative flex min-w-max">
                   {playerHand.map((card, idx) => {
                     const isSelected = selectedCards.some(
@@ -1820,30 +2173,46 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
                         className={`relative ${idx === 0 ? '' : 'sm:ml-2 -ml-3 sm:-ml-0'}`}
                         style={{
                           zIndex: isSelected ? 50 : playerHand.length - idx,
+                          filter: isSelected 
+                            ? 'drop-shadow(0 0 20px rgba(46, 213, 115, 0.8)) drop-shadow(0 8px 16px rgba(0, 0, 0, 0.4))'
+                            : 'drop-shadow(0 4px 8px rgba(0, 0, 0, 0.3))',
                         }}
                         initial={{ 
                           opacity: 0, 
-                          y: 100, 
+                          y: 150, 
                           rotateY: -180,
-                          scale: 0.5 
+                          rotateZ: (idx - playerHand.length / 2) * 5,
+                          scale: 0.3,
+                          x: (idx - playerHand.length / 2) * 20,
                         }}
                         animate={{ 
                           opacity: 1, 
                           y: 0, 
                           rotateY: 0,
-                          scale: 1 
+                          rotateZ: 0,
+                          scale: 1,
+                          x: 0,
                         }}
                         transition={{ 
-                          delay: idx * 0.05,
+                          delay: idx * 0.06,
                           type: "spring",
-                          stiffness: 200,
-                          damping: 20,
+                          stiffness: 350,
+                          damping: 25,
+                          mass: 0.6,
                         }}
                         whileHover={!isSelected ? {
-                          y: -8,
-                          scale: 1.05,
-                          transition: { duration: 0.2 }
-                        } : {}}
+                          y: -15,
+                          scale: 1.12,
+                          rotateZ: 0,
+                          transition: { 
+                            duration: 0.25,
+                            type: "spring",
+                            stiffness: 400,
+                          }
+                        } : {
+                          y: -10,
+                          scale: 1.08,
+                        }}
                       >
                         <CardComponent
                           card={card}
@@ -1854,45 +2223,56 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
                     );
                   })}
                 </div>
+                </div>
               </div>
             </>
           ) : (
             <div className="text-white text-center py-4">
-              <p className="text-sm sm:text-base">Картууд хүлээгдэж байна...</p>
+              <p className="text-sm sm:text-base" style={{ color: '#e0e7ff' }}>Картууд хүлээгдэж байна...</p>
             </div>
           )}
         </div>
       )}
 
-      {/* Action Buttons - Royal Styled with Animations */}
+      {/* Professional Poker Action Buttons */}
       {gameStarted && isMyTurn && (
         <motion.div 
           className="absolute bottom-2 sm:bottom-4 left-0 right-0 flex justify-center gap-2 sm:gap-3 px-2 sm:px-4 z-50"
-          initial={{ opacity: 0, y: 20 }}
+          initial={{ opacity: 0, y: 30 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.2 }}
+          transition={{ 
+            delay: 0.2,
+            type: "spring",
+            stiffness: 200,
+            damping: 20
+          }}
         >
           <motion.div 
-            className="flex items-center gap-3 px-6 py-4 rounded-[30px] shadow-2xl relative overflow-hidden"
+            className="flex items-center gap-3 px-6 py-4 sm:px-8 sm:py-5 rounded-[35px] shadow-2xl relative overflow-hidden backdrop-blur-md"
             style={{
-              background: 'linear-gradient(135deg, rgba(17, 24, 39, 0.95) 0%, rgba(31, 41, 55, 0.95) 100%)',
-              border: '2px solid rgba(251, 191, 36, 0.5)',
-              boxShadow: '0 8px 32px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(251, 191, 36, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.1)',
+              background: 'linear-gradient(135deg, rgba(15, 42, 74, 0.95) 0%, rgba(30, 58, 95, 0.9) 50%, rgba(0, 0, 0, 0.95) 100%)',
+              border: '3px solid rgba(59, 130, 246, 0.5)',
+              boxShadow: '0 10px 40px rgba(0, 0, 0, 0.8), 0 0 30px rgba(59, 130, 246, 0.3), inset 0 2px 4px rgba(255, 255, 255, 0.1), inset 0 -2px 4px rgba(0, 0, 0, 0.4)',
             }}
             animate={{
               boxShadow: [
-                '0 8px 32px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(251, 191, 36, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.1)',
-                '0 8px 40px rgba(251, 191, 36, 0.3), 0 0 0 1px rgba(251, 191, 36, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.1)',
-                '0 8px 32px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(251, 191, 36, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.1)',
+                '0 10px 40px rgba(0, 0, 0, 0.8), 0 0 30px rgba(59, 130, 246, 0.3), inset 0 2px 4px rgba(255, 255, 255, 0.1), inset 0 -2px 4px rgba(0, 0, 0, 0.4)',
+                '0 12px 50px rgba(0, 0, 0, 0.9), 0 0 40px rgba(59, 130, 246, 0.5), inset 0 2px 4px rgba(255, 255, 255, 0.15), inset 0 -2px 4px rgba(0, 0, 0, 0.4)',
+                '0 10px 40px rgba(0, 0, 0, 0.8), 0 0 30px rgba(59, 130, 246, 0.3), inset 0 2px 4px rgba(255, 255, 255, 0.1), inset 0 -2px 4px rgba(0, 0, 0, 0.4)',
+              ],
+              borderColor: [
+                'rgba(59, 130, 246, 0.5)',
+                'rgba(59, 130, 246, 0.8)',
+                'rgba(59, 130, 246, 0.5)',
               ],
             }}
             transition={{ duration: 3, repeat: Infinity }}
           >
-            {/* Shimmer effect */}
+            {/* Animated shimmer effect with blue theme */}
             <motion.div
-              className="absolute inset-0"
+              className="absolute inset-0 rounded-[35px]"
               style={{
-                background: 'linear-gradient(90deg, transparent, rgba(251, 191, 36, 0.1), transparent)',
+                background: 'linear-gradient(90deg, transparent, rgba(59, 130, 246, 0.2), transparent)',
               }}
               animate={{
                 x: ['-100%', '200%'],
@@ -1900,111 +2280,143 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
               transition={{ duration: 3, repeat: Infinity, ease: "linear" }}
             />
             
-            {/* ӨНЖИХ Button */}
+            {/* Professional ӨНЖИХ (FOLD) Icon Button */}
             <motion.button
               onClick={handlePass}
-              className="px-6 py-3 rounded-[20px] text-white font-bold font-orbitron text-sm relative overflow-hidden"
+              className="w-16 h-16 sm:w-20 sm:h-20 rounded-full flex items-center justify-center text-white relative overflow-hidden group"
               style={{ 
-                letterSpacing: '1px',
-                background: 'linear-gradient(135deg, #FF4757 0%, #FF3838 50%, #FF4757 100%)',
-                boxShadow: '0 4px 16px rgba(255, 71, 87, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.2)',
+                background: 'linear-gradient(135deg, #1e3a5f 0%, #0f2a4a 50%, #000000 100%)',
+                border: '3px solid rgba(59, 130, 246, 0.6)',
+                boxShadow: '0 8px 24px rgba(0, 0, 0, 0.8), 0 0 20px rgba(59, 130, 246, 0.4), inset 0 2px 4px rgba(255, 255, 255, 0.1)',
               }}
-              whileHover={{ scale: 1.08, y: -2 }}
-              whileTap={{ scale: 0.95 }}
-              transition={{ type: "spring", stiffness: 400, damping: 17 }}
+              whileHover={{ 
+                scale: 1.15, 
+                y: -5,
+                boxShadow: '0 12px 32px rgba(0, 0, 0, 0.9), 0 0 30px rgba(59, 130, 246, 0.6), inset 0 2px 4px rgba(255, 255, 255, 0.15)',
+                borderColor: 'rgba(59, 130, 246, 0.9)',
+              }}
+              whileTap={{ scale: 0.9 }}
+              transition={{ type: "spring", stiffness: 500, damping: 20 }}
+              title="Өнжих"
             >
               <motion.div
-                className="absolute inset-0"
+                className="absolute inset-0 rounded-full"
                 style={{
-                  background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent)',
+                  background: 'radial-gradient(circle, rgba(59, 130, 246, 0.2) 0%, transparent 70%)',
                 }}
                 animate={{
-                  x: ['-100%', '200%'],
+                  scale: [1, 1.2, 1],
+                  opacity: [0.5, 0.8, 0.5],
                 }}
-                transition={{ duration: 1.5, repeat: Infinity, ease: "linear" }}
+                transition={{ duration: 2, repeat: Infinity }}
               />
-              <span className="relative z-10">ӨНЖИХ</span>
+              <FaHandPaper className="relative z-10 w-7 h-7 sm:w-9 sm:h-9" style={{ filter: 'drop-shadow(0 2px 8px rgba(0, 0, 0, 0.8))' }} />
             </motion.button>
             
-            {/* ТОГЛОХ Button */}
+            {/* Professional ТОГЛОХ (PLAY) Icon Button */}
             <motion.button
               onClick={handlePlayCards}
               disabled={selectedCards.length === 0}
-              className={`px-6 py-3 rounded-[20px] text-white font-bold font-orbitron text-sm relative overflow-hidden ${
+              className={`w-16 h-16 sm:w-20 sm:h-20 rounded-full flex items-center justify-center text-white relative overflow-hidden group ${
                 selectedCards.length > 0
                   ? 'cursor-pointer'
-                  : 'opacity-50 cursor-not-allowed'
+                  : 'opacity-40 cursor-not-allowed'
               }`}
               style={{ 
-                letterSpacing: '1px',
                 background: selectedCards.length > 0
-                  ? 'linear-gradient(135deg, #2ED573 0%, #00C896 50%, #2ED573 100%)'
-                  : 'linear-gradient(135deg, #6B7280 0%, #4B5563 100%)',
+                  ? 'linear-gradient(135deg, #3b82f6 0%, #2563eb 50%, #1e40af 100%)'
+                  : 'linear-gradient(135deg, #1e3a5f 0%, #0f2a4a 100%)',
+                border: `3px solid ${selectedCards.length > 0 ? 'rgba(59, 130, 246, 0.8)' : 'rgba(59, 130, 246, 0.3)'}`,
                 boxShadow: selectedCards.length > 0
-                  ? '0 4px 16px rgba(46, 213, 115, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.2)'
-                  : '0 4px 16px rgba(0, 0, 0, 0.2)',
+                  ? '0 8px 24px rgba(59, 130, 246, 0.6), 0 0 20px rgba(59, 130, 246, 0.4), inset 0 2px 4px rgba(255, 255, 255, 0.2)'
+                  : '0 4px 12px rgba(0, 0, 0, 0.5), inset 0 1px 2px rgba(255, 255, 255, 0.05)',
               }}
-              whileHover={selectedCards.length > 0 ? { scale: 1.08, y: -2 } : {}}
-              whileTap={selectedCards.length > 0 ? { scale: 0.95 } : {}}
+              whileHover={selectedCards.length > 0 ? { 
+                scale: 1.15, 
+                y: -5,
+                boxShadow: '0 12px 32px rgba(59, 130, 246, 0.8), 0 0 30px rgba(59, 130, 246, 0.6), inset 0 2px 4px rgba(255, 255, 255, 0.25)',
+                borderColor: 'rgba(59, 130, 246, 1)',
+              } : {}}
+              whileTap={selectedCards.length > 0 ? { scale: 0.9 } : {}}
               animate={selectedCards.length > 0 ? {
                 boxShadow: [
-                  '0 4px 16px rgba(46, 213, 115, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.2)',
-                  '0 6px 24px rgba(46, 213, 115, 0.8), inset 0 1px 0 rgba(255, 255, 255, 0.2)',
-                  '0 4px 16px rgba(46, 213, 115, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.2)',
+                  '0 8px 24px rgba(59, 130, 246, 0.6), 0 0 20px rgba(59, 130, 246, 0.4), inset 0 2px 4px rgba(255, 255, 255, 0.2)',
+                  '0 12px 32px rgba(59, 130, 246, 0.8), 0 0 30px rgba(59, 130, 246, 0.6), inset 0 2px 4px rgba(255, 255, 255, 0.25)',
+                  '0 8px 24px rgba(59, 130, 246, 0.6), 0 0 20px rgba(59, 130, 246, 0.4), inset 0 2px 4px rgba(255, 255, 255, 0.2)',
                 ],
               } : {}}
-              transition={{ duration: 2, repeat: Infinity }}
+              transition={{ duration: 2.5, repeat: Infinity }}
+              title="Тоглох"
             >
               {selectedCards.length > 0 && (
                 <motion.div
-                  className="absolute inset-0"
+                  className="absolute inset-0 rounded-full"
                   style={{
-                    background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent)',
+                    background: 'radial-gradient(circle, rgba(59, 130, 246, 0.3) 0%, transparent 70%)',
                   }}
                   animate={{
-                    x: ['-100%', '200%'],
+                    scale: [1, 1.3, 1],
+                    opacity: [0.6, 1, 0.6],
                   }}
-                  transition={{ duration: 1.5, repeat: Infinity, ease: "linear" }}
+                  transition={{ duration: 1.5, repeat: Infinity }}
                 />
               )}
-              <span className="relative z-10">ТОГЛОХ</span>
+              <FaPlay className="relative z-10 w-6 h-6 sm:w-8 sm:h-8 ml-1" style={{ filter: 'drop-shadow(0 2px 8px rgba(0, 0, 0, 0.8))' }} />
             </motion.button>
             
-            {/* ЗӨВЛӨГӨӨ Button */}
+            {/* Professional ЗӨВЛӨГӨӨ (HINT) Icon Button */}
             <motion.button
               onClick={handleAdvice}
-              className="px-6 py-3 rounded-[20px] text-white font-bold font-orbitron text-sm relative overflow-hidden"
+              className="w-16 h-16 sm:w-20 sm:h-20 rounded-full flex items-center justify-center text-white relative overflow-hidden group"
               style={{ 
-                letterSpacing: '1px',
-                background: 'linear-gradient(135deg, #F97316 0%, #EA580C 50%, #F97316 100%)',
-                boxShadow: '0 4px 16px rgba(249, 115, 22, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.2)',
+                background: 'linear-gradient(135deg, #1e3a5f 0%, #0f2a4a 50%, #000000 100%)',
+                border: '3px solid rgba(59, 130, 246, 0.6)',
+                boxShadow: '0 8px 24px rgba(0, 0, 0, 0.8), 0 0 20px rgba(59, 130, 246, 0.4), inset 0 2px 4px rgba(255, 255, 255, 0.1)',
               }}
-              whileHover={{ scale: 1.08, y: -2 }}
-              whileTap={{ scale: 0.95 }}
-              transition={{ type: "spring", stiffness: 400, damping: 17 }}
+              whileHover={{ 
+                scale: 1.15, 
+                y: -5,
+                boxShadow: '0 12px 32px rgba(0, 0, 0, 0.9), 0 0 30px rgba(59, 130, 246, 0.6), inset 0 2px 4px rgba(255, 255, 255, 0.15)',
+                borderColor: 'rgba(59, 130, 246, 0.9)',
+              }}
+              whileTap={{ scale: 0.9 }}
+              transition={{ type: "spring", stiffness: 500, damping: 20 }}
+              title="Зөвлөгөө"
             >
               <motion.div
-                className="absolute inset-0"
+                className="absolute inset-0 rounded-full"
                 style={{
-                  background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent)',
+                  background: 'radial-gradient(circle, rgba(59, 130, 246, 0.2) 0%, transparent 70%)',
                 }}
                 animate={{
-                  x: ['-100%', '200%'],
+                  scale: [1, 1.2, 1],
+                  opacity: [0.5, 0.8, 0.5],
                 }}
-                transition={{ duration: 1.5, repeat: Infinity, ease: "linear" }}
+                transition={{ duration: 2, repeat: Infinity }}
               />
-              <span className="relative z-10">ЗӨВЛӨГӨӨ</span>
+              <FaLightbulb className="relative z-10 w-7 h-7 sm:w-9 sm:h-9" style={{ filter: 'drop-shadow(0 2px 8px rgba(0, 0, 0, 0.8))' }} />
             </motion.button>
             
-            {/* Clear Selection Button */}
+            {/* Clear Selection Icon Button */}
             {selectedCards.length > 0 && (
-              <button
+              <motion.button
                 onClick={handleClearSelection}
-                className="px-4 py-2.5 bg-gray-600 rounded-[20px] text-white font-bold hover:bg-gray-700 transition-all cursor-pointer shadow-md hover:scale-105 active:scale-95"
+                className="w-12 h-12 sm:w-14 sm:h-14 rounded-full flex items-center justify-center text-white relative overflow-hidden"
+                style={{
+                  background: 'linear-gradient(135deg, #1e3a5f 0%, #0f2a4a 100%)',
+                  border: '2px solid rgba(59, 130, 246, 0.5)',
+                  boxShadow: '0 4px 16px rgba(0, 0, 0, 0.6), inset 0 1px 2px rgba(255, 255, 255, 0.1)',
+                }}
+                whileHover={{ 
+                  scale: 1.1, 
+                  borderColor: 'rgba(59, 130, 246, 0.8)',
+                }}
+                whileTap={{ scale: 0.9 }}
+                transition={{ type: "spring", stiffness: 400, damping: 20 }}
                 title="Сонголт цуцлах"
               >
-                ✕
-              </button>
+                <MdClear className="w-5 h-5 sm:w-6 sm:h-6" />
+              </motion.button>
             )}
           </motion.div>
         </motion.div>
@@ -2028,41 +2440,84 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
             </div>
           </div>
 
-          {/* Show all 4 seats in positions */}
-          {[1, 2, 3, 4].map((seatId) => {
-            const player = seatedPlayers.find((p) => p.playerId === seatId);
-            const isOccupied = !!player;
-            const isMe = seatId === myPlayerId;
-            const isReady = playerReadyStatus[seatId] || false;
+          {/* Show all 4 seats in positions - sorted by join order (playerId) */}
+          {(() => {
+            // Sort players by join order (playerId) to ensure consistent ordering
+            const sortedPlayers = [...seatedPlayers].sort((a, b) => a.playerId - b.playerId);
+            const allSeatIds = [1, 2, 3, 4];
             
-            // If this is my seat but I'm not in seatedPlayers yet, create a placeholder
-            const displayPlayer = isMe && !player ? {
-              playerId: myPlayerId,
-              username: myDisplayName || myUsername || 'Та',
-              avatar_url: myAvatarUrl
-            } : player;
+            // Create a map of seatId to player for easy lookup
+            const seatMap = new Map<number, any>();
+            sortedPlayers.forEach(p => seatMap.set(p.playerId, p));
             
-            // Calculate relative position - optimized for mobile
-            const getRelativePosition = (id: number) => {
+            // If I'm not in seatedPlayers yet, add myself
+            if (myPlayerId && !seatMap.has(myPlayerId)) {
+              seatMap.set(myPlayerId, {
+                playerId: myPlayerId,
+                username: myDisplayName || myUsername || 'Та',
+                avatar_url: myAvatarUrl,
+                userId: myUserId
+              });
+            }
+            
+            // Calculate positions relative to myPlayerId
+            // Each player always sees themselves at bottom left
+            const getRelativePosition = (playerId: number) => {
               if (!myPlayerId) return 'top-4 left-1/2 -translate-x-1/2';
-              const diff = id - myPlayerId;
-              const relativeId = (3 + diff) % 4;
-              switch (relativeId) {
-                case 1: // Top center
-                  return 'top-4 sm:top-10 left-1/2 -translate-x-1/2';
-                case 2: // Top right
-                  return 'top-16 sm:top-20 right-2 sm:right-10';
-                case 3: // Bottom left (my position - show at bottom)
+              
+              // If this is me, always return bottom left position
+              if (playerId === myPlayerId) {
+                return 'bottom-32 sm:bottom-10 left-2 sm:left-10';
+              }
+              
+              // Calculate relative position based on playerId difference
+              // My position (myPlayerId) is always bottom left
+              // Other players are positioned in join order: top center, top right, top left
+              const diff = playerId - myPlayerId;
+              
+              // Normalize to 0-3 range (4 players max)
+              const relativePosition = ((diff % 4) + 4) % 4;
+              
+              switch (relativePosition) {
+                case 0: // Me - bottom left (shouldn't reach here due to check above, but keep for safety)
                   return 'bottom-32 sm:bottom-10 left-2 sm:left-10';
-                case 0: // Top left
+                case 1: // Next player (myPlayerId + 1) - top center
+                  return 'top-4 sm:top-10 left-1/2 -translate-x-1/2';
+                case 2: // Second next (myPlayerId + 2) - top right
+                  return 'top-16 sm:top-20 right-2 sm:right-10';
+                case 3: // Third next (myPlayerId + 3) - top left
                   return 'top-16 sm:top-20 left-2 sm:left-10';
                 default:
                   return 'top-4 sm:top-10 left-1/2 -translate-x-1/2';
               }
             };
-
-            const position = getRelativePosition(seatId);
-            const playerColor = isMe ? '#3B82F6' : '#9C27B0';
+            
+            // Get player index for avatar assignment
+            // Create a list of all actual players (occupied seats only) - calculate once outside map
+            const actualPlayers = allSeatIds
+              .map(id => seatMap.get(id))
+              .filter(p => p !== undefined)
+              .sort((a, b) => a.playerId - b.playerId);
+            const totalPlayers = actualPlayers.length;
+            
+            return allSeatIds.map((seatId) => {
+              const player = seatMap.get(seatId);
+              const isOccupied = !!player;
+              const isMe = seatId === myPlayerId;
+              const isReady = playerReadyStatus[seatId] || false;
+              
+              // If this is my seat but I'm not in seatedPlayers yet, create a placeholder
+              const displayPlayer = isMe && !player ? {
+                playerId: myPlayerId,
+                username: myDisplayName || myUsername || 'Та',
+                avatar_url: myAvatarUrl,
+                userId: myUserId
+              } : player;
+              
+              // Use the actual playerId for position calculation, not seatId
+              const actualPlayerId = displayPlayer?.playerId || seatId;
+              const position = getRelativePosition(actualPlayerId);
+              const playerColor = isMe ? '#3B82F6' : '#9C27B0';
             const displayName = displayPlayer?.username || displayPlayer?.displayName || (isMe ? (myDisplayName || myUsername || 'Та') : `Player ${seatId}`);
             // Get avatar URL - check multiple possible fields and ensure it's a valid URL
             let avatarUrl = displayPlayer?.avatar_url || displayPlayer?.avatarUrl || '';
@@ -2082,29 +2537,39 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
             const pokerAvatar = getPokerAvatar(playerUserId, avatarUrl, displayNameForAvatar);
             const avatarGradient = getAvatarGradient(playerUserId);
             const formattedUserId = formatUserId(playerUserId);
+            
+            // Find the index of this player in the sorted list
+            const playerIndex = actualPlayers.findIndex(p => p?.playerId === actualPlayerId);
+            
+            // Get the default avatar path based on player index and total player count
+            const defaultAvatarPath = getAvatarPath(playerIndex >= 0 ? playerIndex : 0, totalPlayers || 1);
 
             return (
               <div key={seatId} className={`absolute ${position} pointer-events-auto w-[140px] sm:w-auto`}>
                 <motion.div
                   className={`p-2 sm:p-4 rounded-xl sm:rounded-2xl border-2 sm:border-3 ${
                     isReady
-                      ? 'border-[#2ED573] bg-gradient-to-br from-white via-white to-[#2ED573]/10 backdrop-blur-sm'
+                      ? 'border-[#2ED573] bg-gradient-to-br from-[#1e3a5f]/90 via-[#0f2a4a]/90 to-black/95 backdrop-blur-sm'
                       : isMe
-                      ? 'border-[#FFD700] bg-gradient-to-br from-white via-white to-[#FFD700]/10 backdrop-blur-sm'
-                      : 'border-gray-300/50 bg-gradient-to-br from-white/95 via-white/90 to-gray-100/50 backdrop-blur-sm'
+                      ? 'border-[#3B82F6] bg-gradient-to-br from-[#1e3a5f]/90 via-[#0f2a4a]/90 to-black/95 backdrop-blur-sm'
+                      : isOccupied
+                      ? 'border-[#3B82F6]/50 bg-gradient-to-br from-[#1e3a5f]/80 via-[#0f2a4a]/80 to-black/90 backdrop-blur-sm'
+                      : 'border-[#3B82F6]/30 bg-gradient-to-br from-[#1e3a5f]/60 via-[#0f2a4a]/60 to-black/80 backdrop-blur-sm'
                   }`}
                   style={{
                     boxShadow: isReady
-                      ? '0 8px 32px rgba(46, 213, 115, 0.5), 0 0 20px rgba(46, 213, 115, 0.3)'
+                      ? '0 8px 32px rgba(46, 213, 115, 0.5), 0 0 20px rgba(46, 213, 115, 0.3), inset 0 0 20px rgba(59, 130, 246, 0.1)'
                       : isMe
-                      ? '0 8px 32px rgba(251, 191, 36, 0.4), 0 0 20px rgba(251, 191, 36, 0.2)'
-                      : '0 4px 20px rgba(0, 0, 0, 0.15)',
+                      ? '0 8px 32px rgba(59, 130, 246, 0.4), 0 0 20px rgba(59, 130, 246, 0.2), inset 0 0 20px rgba(59, 130, 246, 0.1)'
+                      : isOccupied
+                      ? '0 4px 20px rgba(59, 130, 246, 0.3), inset 0 0 10px rgba(59, 130, 246, 0.05)'
+                      : '0 4px 20px rgba(0, 0, 0, 0.4), inset 0 0 10px rgba(59, 130, 246, 0.05)',
                   }}
                   whileHover={{ scale: 1.05 }}
                   transition={{ type: "spring", stiffness: 300, damping: 20 }}
                 >
-                  <div className="flex items-center gap-2 sm:gap-3 flex-wrap sm:flex-nowrap">
-                    {/* Royal Avatar with Poker Theme */}
+                  <div className="flex flex-col items-center gap-2 sm:gap-3">
+                    {/* Chair or Office Person Icon */}
                     <div className="relative">
                       {isReady && (isOccupied || isMe) && (
                         <motion.div 
@@ -2113,76 +2578,100 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
                           transition={{ duration: 2, repeat: Infinity }}
                         />
                       )}
-                      <div
-                        className="w-12 h-12 sm:w-16 sm:h-16 rounded-full flex items-center justify-center text-white font-bold text-lg sm:text-2xl border-2 sm:border-3 shadow-xl overflow-hidden relative"
-                        style={{
-                          background: (isOccupied || isMe)
-                            ? avatarUrl 
-                              ? 'transparent'
-                              : avatarGradient
-                            : 'linear-gradient(135deg, #e5e7eb, #d1d5db)',
-                          borderColor: isReady
-                            ? '#2ED573'
-                            : isMe
-                            ? '#FFD700'
-                            : '#9ca3af',
-                          borderWidth: '3px',
-                          boxShadow: isReady
-                            ? '0 0 20px rgba(46, 213, 115, 0.6), inset 0 0 20px rgba(255, 255, 255, 0.1)'
-                            : isMe
-                            ? '0 0 20px rgba(251, 191, 36, 0.5), inset 0 0 20px rgba(255, 255, 255, 0.1)'
-                            : '0 4px 12px rgba(0, 0, 0, 0.2)',
-                        }}
-                      >
-                        {avatarUrl && avatarUrl.trim() !== '' ? (
-                          <img 
-                            src={avatarUrl} 
-                            alt={displayName}
-                            className="w-full h-full object-cover rounded-full"
-                            onError={(e) => {
-                              // If image fails to load, show first letter as fallback
-                              const target = e.target as HTMLImageElement;
-                              target.style.display = 'none';
-                              const parent = target.parentElement;
-                              if (parent) {
-                                // Remove any existing fallback
-                                const existingFallback = parent.querySelector('span');
-                                if (existingFallback) {
-                                  existingFallback.remove();
-                                }
-                                // Add new fallback with first letter
-                                const fallback = document.createElement('span');
-                                fallback.className = 'text-3xl drop-shadow-lg font-bold text-white';
-                                fallback.textContent = pokerAvatar;
-                                parent.appendChild(fallback);
-                              }
-                            }}
-                            onLoad={() => {
-                              // Image loaded successfully
-                              console.log('Avatar loaded successfully for player', seatId, avatarUrl);
-                            }}
+                      {isOccupied || isMe ? (
+                        <div className="relative">
+                          <OfficePersonIcon 
+                            size={isMe ? 90 : 80} 
+                            isReady={isReady}
+                            className="drop-shadow-2xl"
+                            avatarUrl={avatarUrl}
+                            name={displayName}
                           />
-                        ) : (isOccupied || isMe) ? (
-                          <span className="text-3xl drop-shadow-lg font-bold text-white">
-                            {pokerAvatar}
-                          </span>
-                        ) : (
-                          <span className="text-gray-400 text-xl">○</span>
-                        )}
-                        {/* Royal crown overlay for ready players */}
-                        {isReady && (isOccupied || isMe) && (
-                          <div className="absolute -top-1 left-1/2 -translate-x-1/2 text-yellow-400 text-lg drop-shadow-lg">
-                            👑
+                          {/* Avatar overlay on person - always use default avatars based on player count */}
+                          <div className="absolute top-2 left-1/2 -translate-x-1/2">
+                            {/* Crown icon above avatar - positioned higher to not cover face */}
+                            {isReady && (
+                              <div className="absolute -top-5 sm:-top-6 left-1/2 -translate-x-1/2 z-30 text-yellow-400 text-lg sm:text-xl drop-shadow-lg pointer-events-none">
+                                👑
+                              </div>
+                            )}
+                            <div
+                              className="w-10 h-10 sm:w-12 sm:h-12 rounded-full flex items-center justify-center text-white font-bold text-sm sm:text-lg border-2 shadow-xl overflow-hidden relative"
+                              style={{
+                                background: 'transparent',
+                                borderColor: isReady
+                                  ? '#2ED573'
+                                  : isMe
+                                  ? '#3B82F6'
+                                  : '#3B82F6',
+                                borderWidth: '2px',
+                                boxShadow: isReady
+                                  ? '0 0 15px rgba(46, 213, 115, 0.6), inset 0 0 10px rgba(255, 255, 255, 0.1)'
+                                  : isMe
+                                  ? '0 0 15px rgba(59, 130, 246, 0.5), inset 0 0 10px rgba(255, 255, 255, 0.1)'
+                                  : '0 0 10px rgba(59, 130, 246, 0.4), inset 0 0 8px rgba(255, 255, 255, 0.1)',
+                              }}
+                            >
+                              {/* Always use default avatar based on player count and position */}
+                              <img 
+                                src={defaultAvatarPath} 
+                                alt={displayName}
+                                className="w-full h-full object-cover rounded-full z-10"
+                                onError={(e) => {
+                                  // If default avatar fails, show gradient background with first letter
+                                  const target = e.target as HTMLImageElement;
+                                  target.style.display = 'none';
+                                  const parent = target.parentElement;
+                                  if (parent) {
+                                    const existingFallback = parent.querySelector('span');
+                                    if (existingFallback) {
+                                      existingFallback.remove();
+                                    }
+                                    const fallback = document.createElement('span');
+                                    fallback.className = 'text-xl drop-shadow-lg font-bold text-white z-10';
+                                    fallback.textContent = pokerAvatar;
+                                    parent.appendChild(fallback);
+                                  }
+                                }}
+                                onLoad={() => {
+                                  console.log('Default avatar loaded in ready overlay for player', seatId, defaultAvatarPath);
+                                }}
+                              />
+                              {/* Overlay custom avatar if available and valid */}
+                              {avatarUrl && avatarUrl.trim() !== '' && (
+                                <img 
+                                  src={avatarUrl} 
+                                  alt={displayName}
+                                  className="w-full h-full object-cover rounded-full absolute inset-0 z-20"
+                                  onError={(e) => {
+                                    // If custom avatar fails, just hide it and show default avatar
+                                    const target = e.target as HTMLImageElement;
+                                    target.style.display = 'none';
+                                    console.log('Custom avatar failed to load in ready overlay for player', seatId);
+                                  }}
+                                  onLoad={() => {
+                                    console.log('Custom avatar loaded in ready overlay for player', seatId, avatarUrl);
+                                  }}
+                                />
+                              )}
+                            </div>
                           </div>
-                        )}
-                      </div>
+                        </div>
+                      ) : (
+                        // Closed face for empty seats
+                        <div className="relative flex items-center justify-center">
+                          <div className="w-20 h-20 sm:w-24 sm:h-24 rounded-full bg-gradient-to-br from-[#1e3a5f]/60 to-[#0f2a4a]/60 border-2 border-[#3B82F6]/30 flex items-center justify-center shadow-xl">
+                            <div className="text-4xl sm:text-5xl opacity-70">😶</div>
+                          </div>
+                        </div>
+                      )}
                     </div>
 
                     {/* Ready/Not Ready buttons - only for MY player */}
                     {isMe && (isOccupied || myPlayerId) && (
-                      <div className="flex gap-1.5 sm:gap-2">
-                        {/* Ready (Check) button */}
-                        <button
+                      <div className="flex gap-1.5 sm:gap-2 flex-wrap justify-center">
+                        {/* Ready (Check) button - Beautiful Icon */}
+                        <motion.button
                           onClick={(e) => {
                             e.preventDefault();
                             e.stopPropagation();
@@ -2190,33 +2679,52 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
                             handleReady(true);
                           }}
                           disabled={isReady || !isConnected}
-                          className={`w-8 h-8 sm:w-10 sm:h-10 rounded-full flex items-center justify-center border-2 transition-all ${
+                          className={`w-9 h-9 sm:w-11 sm:h-11 rounded-full flex items-center justify-center border-2 transition-all relative overflow-hidden ${
                             isReady
                               ? 'bg-[#2ED573] border-[#2ED573] shadow-lg shadow-[#2ED573]/50 cursor-default'
                               : !isConnected
-                              ? 'bg-gray-300 border-gray-400 cursor-not-allowed opacity-50'
-                              : 'bg-white border-[#2ED573] hover:bg-[#2ED573]/10 hover:scale-110 active:scale-95 cursor-pointer'
+                              ? 'bg-[#1e3a5f] border-[#3B82F6]/30 cursor-not-allowed opacity-50'
+                              : 'bg-gradient-to-br from-[#1e3a5f] to-[#0f2a4a] border-[#2ED573] hover:bg-[#2ED573]/20 hover:scale-110 active:scale-95 cursor-pointer'
                           }`}
+                          style={{
+                            boxShadow: isReady
+                              ? '0 0 20px rgba(46, 213, 115, 0.6), inset 0 0 10px rgba(255, 255, 255, 0.1)'
+                              : !isConnected
+                              ? '0 2px 8px rgba(0, 0, 0, 0.3)'
+                              : '0 4px 12px rgba(59, 130, 246, 0.3), inset 0 0 8px rgba(59, 130, 246, 0.1)',
+                          }}
+                          whileHover={!isReady && isConnected ? { scale: 1.1 } : {}}
+                          whileTap={!isReady && isConnected ? { scale: 0.9 } : {}}
                           title={isReady ? 'Бэлэн байна' : !isConnected ? 'Холбогдоогүй байна' : 'Бэлэн болгох'}
                         >
+                          {!isReady && isConnected && (
+                            <motion.div
+                              className="absolute inset-0 rounded-full"
+                              style={{
+                                background: 'radial-gradient(circle, rgba(46, 213, 115, 0.2) 0%, transparent 70%)',
+                              }}
+                              animate={{
+                                scale: [1, 1.2, 1],
+                                opacity: [0.5, 0.8, 0.5],
+                              }}
+                              transition={{ duration: 2, repeat: Infinity }}
+                            />
+                          )}
                           <svg
-                            className={`w-4 h-4 sm:w-6 sm:h-6 ${isReady ? 'text-white' : !isConnected ? 'text-gray-500' : 'text-[#2ED573]'}`}
+                            className={`w-5 h-5 sm:w-6 sm:h-6 relative z-10 ${isReady ? 'text-white' : !isConnected ? 'text-[#3B82F6]/50' : 'text-[#2ED573]'}`}
                             fill="none"
                             stroke="currentColor"
                             strokeWidth={3}
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
                             viewBox="0 0 24 24"
-                            xmlns="http://www.w3.org/2000/svg"
                           >
-                            <path
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              d="M5 13l4 4L19 7"
-                            />
+                            <path d="M5 13l4 4L19 7" />
                           </svg>
-                        </button>
+                        </motion.button>
 
-                        {/* Not Ready (X) button */}
-                        <button
+                        {/* Not Ready (X) button - Beautiful Icon */}
+                        <motion.button
                           onClick={(e) => {
                             e.preventDefault();
                             e.stopPropagation();
@@ -2224,39 +2732,101 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
                             handleReady(false);
                           }}
                           disabled={!isReady || !isConnected}
-                          className={`w-8 h-8 sm:w-10 sm:h-10 rounded-full flex items-center justify-center border-2 transition-all ${
+                          className={`w-9 h-9 sm:w-11 sm:h-11 rounded-full flex items-center justify-center border-2 transition-all relative overflow-hidden ${
                             !isReady
                               ? 'bg-[#FF4757] border-[#FF4757] shadow-lg shadow-[#FF4757]/50 cursor-default'
                               : !isConnected
-                              ? 'bg-gray-300 border-gray-400 cursor-not-allowed opacity-50'
-                              : 'bg-white border-[#FF4757] hover:bg-[#FF4757]/10 hover:scale-110 active:scale-95 cursor-pointer'
+                              ? 'bg-[#1e3a5f] border-[#3B82F6]/30 cursor-not-allowed opacity-50'
+                              : 'bg-gradient-to-br from-[#1e3a5f] to-[#0f2a4a] border-[#FF4757] hover:bg-[#FF4757]/20 hover:scale-110 active:scale-95 cursor-pointer'
                           }`}
+                          style={{
+                            boxShadow: !isReady
+                              ? '0 0 20px rgba(255, 71, 87, 0.6), inset 0 0 10px rgba(255, 255, 255, 0.1)'
+                              : !isConnected
+                              ? '0 2px 8px rgba(0, 0, 0, 0.3)'
+                              : '0 4px 12px rgba(255, 71, 87, 0.3), inset 0 0 8px rgba(255, 71, 87, 0.1)',
+                          }}
+                          whileHover={isReady && isConnected ? { scale: 1.1 } : {}}
+                          whileTap={isReady && isConnected ? { scale: 0.9 } : {}}
                           title={!isReady ? 'Бэлэн биш' : !isConnected ? 'Холбогдоогүй байна' : 'Бэлэн төлөв цуцлах'}
                         >
+                          {isReady && isConnected && (
+                            <motion.div
+                              className="absolute inset-0 rounded-full"
+                              style={{
+                                background: 'radial-gradient(circle, rgba(255, 71, 87, 0.2) 0%, transparent 70%)',
+                              }}
+                              animate={{
+                                scale: [1, 1.2, 1],
+                                opacity: [0.5, 0.8, 0.5],
+                              }}
+                              transition={{ duration: 2, repeat: Infinity }}
+                            />
+                          )}
                           <svg
-                            className={`w-4 h-4 sm:w-6 sm:h-6 ${!isReady ? 'text-white' : !isConnected ? 'text-gray-500' : 'text-[#FF4757]'}`}
+                            className={`w-5 h-5 sm:w-6 sm:h-6 relative z-10 ${!isReady ? 'text-white' : !isConnected ? 'text-[#3B82F6]/50' : 'text-[#FF4757]'}`}
                             fill="none"
                             stroke="currentColor"
                             strokeWidth={3}
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
                             viewBox="0 0 24 24"
-                            xmlns="http://www.w3.org/2000/svg"
                           >
-                            <path
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              d="M6 18L18 6M6 6l12 12"
-                            />
+                            <path d="M6 18L18 6M6 6l12 12" />
                           </svg>
-                        </button>
+                        </motion.button>
 
-                        {/* Action buttons next to ready buttons */}
-                        <div className="flex gap-1 sm:gap-2 ml-1 sm:ml-2">
-                          <button className="w-7 h-7 sm:w-8 sm:h-8 bg-[#00C896] rounded-full flex items-center justify-center text-white hover:bg-[#00A884] transition shadow-lg text-xs sm:text-sm">
-                            🔄
-                          </button>
-                          <button className="w-7 h-7 sm:w-8 sm:h-8 bg-[#9C27B0] rounded-full flex items-center justify-center text-white hover:bg-purple-700 transition shadow-lg text-xs sm:text-sm">
-                            💬
-                          </button>
+                        {/* Action buttons - Beautiful Icons */}
+                        <div className="flex gap-1.5 sm:gap-2">
+                          <motion.button 
+                            className="w-9 h-9 sm:w-11 sm:h-11 bg-gradient-to-br from-[#1e3a5f] to-[#0f2a4a] border-2 border-[#3B82F6]/50 rounded-full flex items-center justify-center text-white hover:border-[#3B82F6] transition shadow-lg relative overflow-hidden"
+                            style={{
+                              boxShadow: '0 4px 12px rgba(59, 130, 246, 0.3), inset 0 0 8px rgba(59, 130, 246, 0.1)',
+                            }}
+                            whileHover={{ scale: 1.1, borderColor: '#3B82F6' }}
+                            whileTap={{ scale: 0.9 }}
+                            title="Солих"
+                          >
+                            <motion.div
+                              className="absolute inset-0 rounded-full"
+                              style={{
+                                background: 'radial-gradient(circle, rgba(59, 130, 246, 0.2) 0%, transparent 70%)',
+                              }}
+                              animate={{
+                                scale: [1, 1.2, 1],
+                                opacity: [0.5, 0.8, 0.5],
+                              }}
+                              transition={{ duration: 2, repeat: Infinity }}
+                            />
+                            <svg className="w-5 h-5 sm:w-6 sm:h-6 relative z-10 text-[#3B82F6]" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                            </svg>
+                          </motion.button>
+                          <motion.button 
+                            className="w-9 h-9 sm:w-11 sm:h-11 bg-gradient-to-br from-[#1e3a5f] to-[#0f2a4a] border-2 border-[#3B82F6]/50 rounded-full flex items-center justify-center text-white hover:border-[#3B82F6] transition shadow-lg relative overflow-hidden"
+                            style={{
+                              boxShadow: '0 4px 12px rgba(59, 130, 246, 0.3), inset 0 0 8px rgba(59, 130, 246, 0.1)',
+                            }}
+                            whileHover={{ scale: 1.1, borderColor: '#3B82F6' }}
+                            whileTap={{ scale: 0.9 }}
+                            onClick={() => setShowChatModal(true)}
+                            title="Чат"
+                          >
+                            <motion.div
+                              className="absolute inset-0 rounded-full"
+                              style={{
+                                background: 'radial-gradient(circle, rgba(59, 130, 246, 0.2) 0%, transparent 70%)',
+                              }}
+                              animate={{
+                                scale: [1, 1.2, 1],
+                                opacity: [0.5, 0.8, 0.5],
+                              }}
+                              transition={{ duration: 2, repeat: Infinity }}
+                            />
+                            <svg className="w-5 h-5 sm:w-6 sm:h-6 relative z-10 text-[#3B82F6]" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                            </svg>
+                          </motion.button>
                         </div>
                       </div>
                     )}
@@ -2264,20 +2834,22 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
 
                   {/* Player name and ID */}
                   <div className="mt-1.5 sm:mt-2 text-center w-full">
-                    <p className="text-gray-800 text-xs sm:text-sm font-bold font-orbitron truncate">
+                    <p className={`text-xs sm:text-sm font-bold font-orbitron truncate ${
+                      (isOccupied || isMe) ? 'text-white' : 'text-[#3B82F6]/60'
+                    }`}>
                       {(isOccupied || isMe)
                         ? displayName
                         : 'Хоосон'}
                     </p>
                     {(isOccupied || isMe) && playerUserId && (
-                      <p className="text-[9px] sm:text-[10px] font-orbitron mt-0.5 sm:mt-1 text-gray-500">
+                      <p className="text-[9px] sm:text-[10px] font-orbitron mt-0.5 sm:mt-1 text-[#3B82F6]/70">
                         ID: {formattedUserId}
                       </p>
                     )}
                     {(isOccupied || isMe) && (
                       <p
                         className={`text-[10px] sm:text-xs font-orbitron mt-0.5 sm:mt-1 ${
-                          isReady ? 'text-[#2ED573] font-semibold' : 'text-gray-600'
+                          isReady ? 'text-[#2ED573] font-semibold' : 'text-[#3B82F6]/70'
                         }`}
                       >
                         {isReady ? 'Бэлэн ✓' : 'Хүлээгдэж байна'}
@@ -2287,7 +2859,8 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
                 </motion.div>
               </div>
             );
-          })}
+            });
+          })()}
         </div>
       )}
 
@@ -2368,6 +2941,54 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
         />
       )}
 
+      {/* Rejoin Modal */}
+      {showRejoinModal && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/70 backdrop-blur-sm">
+          <motion.div
+            initial={{ scale: 0.8, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            exit={{ scale: 0.8, opacity: 0 }}
+            className="bg-gradient-to-br from-[#1e3a5f] via-[#0f2a4a] to-black rounded-2xl p-6 sm:p-8 max-w-md w-[90%] border-2 border-[#3B82F6] shadow-2xl"
+          >
+            <h2 className="text-xl sm:text-2xl font-bold text-white mb-4 text-center font-orbitron">
+              Тоглоомд дахин нэгдэх уу?
+            </h2>
+            <p className="text-sm sm:text-base text-gray-300 mb-6 text-center">
+              Тоглоом үргэлжилж байна. Дахин нэгдэх эсвэл гарах уу?
+            </p>
+            <div className="flex gap-4 justify-center">
+              <motion.button
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
+                onClick={() => {
+                  setShowRejoinModal(false);
+                  // Player chooses to rejoin - they're already reconnected
+                  // Just close the modal
+                }}
+                className="px-6 py-3 bg-gradient-to-r from-[#2ED573] to-[#1DB954] text-white font-bold rounded-lg shadow-lg hover:shadow-[#2ED573]/50 transition-all"
+              >
+                Дахин нэгдэх
+              </motion.button>
+              <motion.button
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
+                onClick={() => {
+                  setShowRejoinModal(false);
+                  // Player chooses to quit - leave the room
+                  if (wsService && wsService.isConnected()) {
+                    wsService.send({ type: 'leaveRoom' });
+                  }
+                  router.push('/room-selection');
+                }}
+                className="px-6 py-3 bg-gradient-to-r from-[#FF4757] to-[#C44569] text-white font-bold rounded-lg shadow-lg hover:shadow-[#FF4757]/50 transition-all"
+              >
+                Гарах
+              </motion.button>
+            </div>
+          </motion.div>
+        </div>
+      )}
+
       {/* Chat Modal / Panel */}
       {showChatModal && (
         <>
@@ -2415,7 +3036,7 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
             {/* Messages */}
             <div className="flex-1 overflow-y-auto p-4 space-y-2">
               {chatMessages.length === 0 ? (
-                <p className="text-white/50 text-center">Чат хоосон байна</p>
+                <p className="text-white text-center">Чат хоосон байна</p>
               ) : (
                 chatMessages.map((msg, idx) => {
                   const player = seatedPlayers.find(p => p.playerId === msg.playerId);

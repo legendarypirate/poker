@@ -13,6 +13,17 @@ function startTurnTimer(roomId, rooms, broadcastToRoom, autoPassFn) {
     return;
   }
   
+  // Check if player is disconnected (no websocket or websocket not open)
+  // If disconnected, immediately auto-pass instead of starting timer
+  const isDisconnected = !currentPlayer.ws || currentPlayer.ws.readyState !== 1;
+  if (isDisconnected) {
+    console.log(`🤖 Player ${currentPlayer.playerId} is disconnected, auto-passing immediately`);
+    if (autoPassFn) {
+      autoPassFn(roomId);
+    }
+    return;
+  }
+  
   broadcastToRoom(roomId, {
     type: "timerUpdate",
     player: currentPlayer.playerId,

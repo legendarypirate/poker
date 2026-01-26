@@ -47,11 +47,19 @@ db.sequelize
 
 // Create HTTP server
 const server = app.listen(3001, () => {
-  console.log("✅ Server is running on port 3043");
+  console.log("✅ Server is running on port 3001");
 });
 
 // Create WebSocket server
 const wss = new WebSocket.Server({ server });
+
+wss.on("error", (error) => {
+  console.error("❌ WebSocket Server Error:", error);
+});
+
+wss.on("listening", () => {
+  console.log("✅ WebSocket server is listening on port 3001");
+});
 
 // Game state
 const rooms = {};
@@ -90,10 +98,16 @@ function createStartTurnTimer(rooms) {
   };
 }
 
-wss.on("connection", (ws) => {
+wss.on("connection", (ws, req) => {
+  console.log(`🔌 New WebSocket connection from ${req.socket.remoteAddress}`);
+  console.log(`📡 Request URL: ${req.url}`);
   let roomId = null;
   let player = null;
   let isAdmin = false;
+
+  ws.on("error", (error) => {
+    console.error("❌ WebSocket connection error:", error);
+  });
 
   ws.on("message", async (msgStr) => {
     let msg;
@@ -239,7 +253,8 @@ wss.on("connection", (ws) => {
     // Silently ignore unknown message types
   });
 
-  ws.on("close", () => {
+  ws.on("close", (code, reason) => {
+    console.log(`🔌 WebSocket connection closed. Code: ${code}, Reason: ${reason || 'No reason'}`);
     // Remove admin connection
     if (isAdmin) {
       removeAdminConnection(ws);

@@ -1,4 +1,4 @@
-import axios from 'axios';
+import axios, { AxiosError } from 'axios';
 import { API_URL } from './config';
 import Cookies from 'js-cookie';
 
@@ -9,14 +9,73 @@ const api = axios.create({
   },
 });
 
+// Helper function to get token from cookies or localStorage
+const getToken = (): string | null => {
+  if (typeof window === 'undefined') return null;
+  
+  // First try cookies
+  const cookieToken = Cookies.get('token');
+  if (cookieToken) return cookieToken;
+  
+  // Fallback to localStorage
+  const localToken = localStorage.getItem('token');
+  if (localToken) {
+    // Also set it in cookies for consistency
+    Cookies.set('token', localToken, { expires: 7 });
+    return localToken;
+  }
+  
+  return null;
+};
+
 // Add token to requests
 api.interceptors.request.use((config) => {
-  const token = Cookies.get('token');
+  const token = getToken();
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
   return config;
+}, (error) => {
+  return Promise.reject(error);
 });
+
+// Handle response errors, especially 401 Unauthorized
+api.interceptors.response.use(
+  (response) => {
+    return response;
+  },
+  async (error: AxiosError) => {
+    if (error.response?.status === 401) {
+      // Clear authentication data
+      Cookies.remove('token');
+      if (typeof window !== 'undefined') {
+        localStorage.removeItem('token');
+        
+        // Clear user data from localStorage
+        const keysToRemove = ['user_id', 'username', 'email', 'account_balance', 'display_name', 'avatar_url'];
+        keysToRemove.forEach(key => localStorage.removeItem(key));
+        
+        // Only redirect if we're not already on a login/auth page
+        const currentPath = window.location.pathname;
+        if (!currentPath.includes('/login') && !currentPath.includes('/auth') && currentPath !== '/') {
+          // Use setTimeout to avoid issues during render
+          setTimeout(() => {
+            window.location.href = '/';
+          }, 100);
+        }
+      }
+      
+      // Return a more user-friendly error
+      return Promise.reject({
+        ...error,
+        message: error.response?.data?.message || 'Authentication failed. Please log in again.',
+        isAuthError: true,
+      });
+    }
+    
+    return Promise.reject(error);
+  }
+);
 
 export const authAPI = {
   login: async (username: string, password: string) => {

@@ -56,9 +56,13 @@ const nextConfig = {
 
     return config;
   },
-  // Ensure experimental features are enabled if needed
+  // External packages for server components
+  serverExternalPackages: ['undici'],
+  // Suppress server action errors that may occur from deployment mismatches
   experimental: {
-    serverComponentsExternalPackages: ['undici'],
+    serverActions: {
+      bodySizeLimit: '2mb',
+    },
   },
 }
 

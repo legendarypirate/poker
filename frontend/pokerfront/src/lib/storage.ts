@@ -57,7 +57,13 @@ export const userStorage = {
     if (user.account_balance !== undefined) storage.set('account_balance', user.account_balance);
     if (user.display_name) storage.set('display_name', user.display_name);
     if (user.avatar_url) storage.set('avatar_url', user.avatar_url);
-    if (user.token) Cookies.set('token', user.token, { expires: 7 });
+    if (user.token) {
+      // Save token to both cookies and localStorage for reliability
+      Cookies.set('token', user.token, { expires: 7 });
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('token', user.token);
+      }
+    }
   },
   
   clearUser: () => {

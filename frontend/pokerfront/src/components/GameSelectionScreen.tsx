@@ -59,6 +59,32 @@ export default function GameSelectionScreen() {
     const userId = userStorage.getUserId();
     if (userId) {
       ws.connect(name, 'admin_chat_room');
+      
+      // Send joinRoom message after connection is established
+      ws.on('connected', () => {
+        console.log('✅ WebSocket connected, joining admin chat room');
+        ws.send({
+          type: 'joinRoom',
+          username: name,
+          roomId: 'admin_chat_room',
+          userId: userId,
+        });
+      });
+      
+      // Handle message history when joining
+      ws.on('messageHistory', (data: any) => {
+        console.log('📚 Received message history:', data);
+        if (data.messages && Array.isArray(data.messages)) {
+          const formattedMessages = data.messages.map((msg: any) => ({
+            userName: msg.userName || (msg.isAdmin ? 'Admin' : name),
+            content: msg.content || msg.message,
+            timestamp: msg.timestamp || new Date().toISOString(),
+            isAdmin: msg.isAdmin || false,
+          }));
+          setChatMessages(formattedMessages);
+        }
+      });
+      
       ws.on('adminNewMessage', (data: any) => {
         setChatMessages((prev) => [...prev, {
           userName: 'Admin',
@@ -67,6 +93,7 @@ export default function GameSelectionScreen() {
           isAdmin: true,
         }]);
       });
+      
       setWsService(ws);
     }
 

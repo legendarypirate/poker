@@ -447,6 +447,14 @@ function handleGameMessage(msg, ws, player, roomId, rooms, roomReadyStatus, broa
 
       clearTurnTimer(roomId, rooms);
 
+      // Update player's last_action_time to show they're active
+      if (player.userId && room.gameId) {
+        const { createOrUpdatePlayerState } = require('./disconnectHandler');
+        createOrUpdatePlayerState(player.userId, room.gameId, true).catch(err => {
+          console.error(`Error updating player state for move:`, err);
+        });
+      }
+
       room.lastPlay = { cards: msg.cards, evaluation: handEvaluation };
       room.passCount = 0;
 
@@ -498,6 +506,14 @@ function handleGameMessage(msg, ws, player, roomId, rooms, roomReadyStatus, broa
       }
 
       clearTurnTimer(roomId, rooms);
+
+      // Update player's last_action_time to show they're active
+      if (player.userId && room.gameId) {
+        const { createOrUpdatePlayerState } = require('./disconnectHandler');
+        createOrUpdatePlayerState(player.userId, room.gameId, true).catch(err => {
+          console.error(`Error updating player state for pass:`, err);
+        });
+      }
 
       const totalPlayers = room.players.length;
       room.passCount++;

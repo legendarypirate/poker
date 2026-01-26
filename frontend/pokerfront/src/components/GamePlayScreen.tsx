@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import { userStorage } from '@/lib/storage';
 import { WebSocketService } from '@/lib/websocket';
+import { WS_URL } from '@/lib/config';
 import { Card, cardValue } from '@/lib/models/card';
 import { HandPlay } from '@/lib/models/hand';
 import { evaluateHand, canPlay } from '@/lib/utils/cardEvaluator';
@@ -16,7 +17,7 @@ import ChairIcon from './ChairIcon';
 import OfficePersonIcon from './OfficePersonIcon';
 import toast from 'react-hot-toast';
 import { IoMdSend } from 'react-icons/io';
-import { FaPlay, FaHandPaper, FaLightbulb, FaTimes, FaWifi } from 'react-icons/fa';
+import { FaPlay, FaHandPaper, FaLightbulb, FaTimes, FaWifi, FaCog } from 'react-icons/fa';
 import { MdClear, MdSignalWifiOff } from 'react-icons/md';
 
 interface GamePlayScreenProps {
@@ -121,6 +122,65 @@ function getAvatarPath(playerIndex: number, totalPlayers: number): string {
   return '/avatar.png';
 }
 
+// Helper function to get table style configuration
+function getTableStyleConfig(style: 'green' | 'blue' | 'black') {
+  switch (style) {
+    case 'green':
+      return {
+        background: 'radial-gradient(circle at 30% 30%, #2d5a3d 0%, #1e4a2d 25%, #0f3a1d 50%, #0a2a15 75%, #051a0d 100%)',
+        ambientLight: 'rgba(46, 213, 115, 0.1)',
+        lightReflection: [
+          'radial-gradient(circle at 30% 30%, rgba(46, 213, 115, 0.08) 0%, transparent 50%)',
+          'radial-gradient(circle at 70% 70%, rgba(46, 213, 115, 0.08) 0%, transparent 50%)',
+          'radial-gradient(circle at 30% 30%, rgba(46, 213, 115, 0.08) 0%, transparent 50%)',
+        ],
+        textureOverlay: `
+          repeating-linear-gradient(0deg, transparent, transparent 1px, rgba(0,0,0,0.05) 1px, rgba(0,0,0,0.05) 2px),
+          repeating-linear-gradient(90deg, transparent, transparent 1px, rgba(0,0,0,0.05) 1px, rgba(0,0,0,0.05) 2px),
+          repeating-linear-gradient(45deg, transparent, transparent 2px, rgba(255,255,255,0.02) 2px, rgba(255,255,255,0.02) 4px),
+          radial-gradient(circle at 25% 25%, rgba(70, 200, 120, 0.15) 0%, transparent 40%),
+          radial-gradient(circle at 75% 75%, rgba(50, 180, 100, 0.15) 0%, transparent 40%)
+        `,
+      };
+    case 'blue':
+      return {
+        background: 'radial-gradient(circle at 30% 30%, #4a6fa5 0%, #3d5a80 25%, #2d4a6b 50%, #1e3a5f 75%, #0f2a4a 100%)',
+        ambientLight: 'rgba(59, 130, 246, 0.1)',
+        lightReflection: [
+          'radial-gradient(circle at 30% 30%, rgba(150, 200, 255, 0.08) 0%, transparent 50%)',
+          'radial-gradient(circle at 70% 70%, rgba(150, 200, 255, 0.08) 0%, transparent 50%)',
+          'radial-gradient(circle at 30% 30%, rgba(150, 200, 255, 0.08) 0%, transparent 50%)',
+        ],
+        textureOverlay: `
+          repeating-linear-gradient(0deg, transparent, transparent 1px, rgba(0,0,0,0.05) 1px, rgba(0,0,0,0.05) 2px),
+          repeating-linear-gradient(90deg, transparent, transparent 1px, rgba(0,0,0,0.05) 1px, rgba(0,0,0,0.05) 2px),
+          repeating-linear-gradient(45deg, transparent, transparent 2px, rgba(255,255,255,0.02) 2px, rgba(255,255,255,0.02) 4px),
+          radial-gradient(circle at 25% 25%, rgba(100, 150, 200, 0.15) 0%, transparent 40%),
+          radial-gradient(circle at 75% 75%, rgba(80, 130, 180, 0.15) 0%, transparent 40%)
+        `,
+      };
+    case 'black':
+      return {
+        background: 'radial-gradient(circle at 30% 30%, #2a2a2a 0%, #1a1a1a 25%, #0f0f0f 50%, #080808 75%, #000000 100%)',
+        ambientLight: 'rgba(255, 255, 255, 0.05)',
+        lightReflection: [
+          'radial-gradient(circle at 30% 30%, rgba(255, 255, 255, 0.06) 0%, transparent 50%)',
+          'radial-gradient(circle at 70% 70%, rgba(255, 255, 255, 0.06) 0%, transparent 50%)',
+          'radial-gradient(circle at 30% 30%, rgba(255, 255, 255, 0.06) 0%, transparent 50%)',
+        ],
+        textureOverlay: `
+          repeating-linear-gradient(0deg, transparent, transparent 1px, rgba(255,255,255,0.02) 1px, rgba(255,255,255,0.02) 2px),
+          repeating-linear-gradient(90deg, transparent, transparent 1px, rgba(255,255,255,0.02) 1px, rgba(255,255,255,0.02) 2px),
+          repeating-linear-gradient(45deg, transparent, transparent 2px, rgba(255,255,255,0.01) 2px, rgba(255,255,255,0.01) 4px),
+          radial-gradient(circle at 25% 25%, rgba(255, 255, 255, 0.08) 0%, transparent 40%),
+          radial-gradient(circle at 75% 75%, rgba(255, 255, 255, 0.08) 0%, transparent 40%)
+        `,
+      };
+    default:
+      return getTableStyleConfig('blue');
+  }
+}
+
 export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
   const router = useRouter();
   const [playerHand, setPlayerHand] = useState<Card[]>([]);
@@ -178,6 +238,16 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
   const [sortBySuit, setSortBySuit] = useState(false);
   const [isDesktop, setIsDesktop] = useState(false);
   const [chatPosition, setChatPosition] = useState<'left' | 'right'>('right');
+  
+  // Table style state
+  const [tableStyle, setTableStyle] = useState<'green' | 'blue' | 'black'>('blue');
+  const [showSettingsPanel, setShowSettingsPanel] = useState(false);
+  
+  // Drag selection state
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragStartIndex, setDragStartIndex] = useState<number | null>(null);
+  const [dragEndIndex, setDragEndIndex] = useState<number | null>(null);
+  const [dragRangeCards, setDragRangeCards] = useState<Card[]>([]);
 
   // Play beep sound and show red background when any player has 1 card left
   useEffect(() => {
@@ -915,8 +985,11 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
             userStorage.setUser(response.user);
             console.log('✅ Balance refreshed after game:', response.user.account_balance);
           }
-        } catch (balanceError) {
-          console.error('❌ Error refreshing balance:', balanceError);
+        } catch (balanceError: any) {
+          // Don't log auth errors as they're handled by the interceptor
+          if (!balanceError?.isAuthError) {
+            console.error('❌ Error refreshing balance:', balanceError);
+          }
         }
         
         // Show game over modal
@@ -1000,7 +1073,16 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
       // For other errors, disconnect
       setIsConnected(false);
       toast.error(errorMsg);
-      console.error('WebSocket error:', data);
+      
+      // Log detailed error information
+      const errorDetails = {
+        message: errorMsg,
+        readyState: data.readyState,
+        error: data.error,
+        timestamp: new Date().toISOString(),
+        url: WS_URL,
+      };
+      console.error('❌ WebSocket error:', errorDetails);
     });
 
     // Listen for auto-start countdown
@@ -1044,7 +1126,86 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
     };
   }, [roomId]);
 
+  // Find best hand from a range of cards
+  const findBestHand = (cards: Card[]): Card[] => {
+    if (cards.length === 0) return [];
+    
+    // Generate all possible combinations
+    const combinations: Card[][] = [];
+    
+    // Single cards
+    for (const card of cards) {
+      combinations.push([card]);
+    }
+    
+    // Pairs
+    const rankCount: Record<string, Card[]> = {};
+    for (const card of cards) {
+      if (!rankCount[card.rank]) rankCount[card.rank] = [];
+      rankCount[card.rank].push(card);
+    }
+    
+    for (const cardsOfRank of Object.values(rankCount)) {
+      if (cardsOfRank.length >= 2) {
+        combinations.push(cardsOfRank.slice(0, 2));
+      }
+      if (cardsOfRank.length >= 3) {
+        combinations.push(cardsOfRank.slice(0, 3));
+      }
+      if (cardsOfRank.length >= 4) {
+        combinations.push(cardsOfRank.slice(0, 4));
+      }
+    }
+    
+    // Straights (5 cards)
+    if (cards.length >= 5) {
+      const sortedCards = [...cards].sort((a, b) => cardValue(a.rank) - cardValue(b.rank));
+      for (let i = 0; i <= sortedCards.length - 5; i++) {
+        const straight = sortedCards.slice(i, i + 5);
+        const play = evaluateHand(straight);
+        if (play.rank !== 'Invalid') {
+          combinations.push(straight);
+        }
+      }
+    }
+    
+    // Flushes (5 cards of same suit)
+    const suitGroups: Record<string, Card[]> = {};
+    for (const card of cards) {
+      if (!suitGroups[card.suit]) suitGroups[card.suit] = [];
+      suitGroups[card.suit].push(card);
+    }
+    for (const suitCards of Object.values(suitGroups)) {
+      if (suitCards.length >= 5) {
+        combinations.push(suitCards.slice(0, 5));
+      }
+    }
+    
+    // Evaluate all combinations and find the best
+    let bestHand: Card[] = [];
+    let bestRank = -1;
+    const rankOrder = ['HighCard', 'OnePair', 'ThreeOfAKind', 'Straight', 'Flush', 'FullHouse', 'FourOfAKind', 'StraightFlush', 'RoyalFlush'];
+    
+    for (const combo of combinations) {
+      const play = evaluateHand(combo);
+      if (play.rank !== 'Invalid') {
+        const rankIndex = rankOrder.indexOf(play.rank);
+        if (rankIndex > bestRank) {
+          bestRank = rankIndex;
+          bestHand = combo;
+        } else if (rankIndex === bestRank && combo.length > bestHand.length) {
+          bestHand = combo;
+        }
+      }
+    }
+    
+    return bestHand;
+  };
+
   const handleCardClick = (card: Card) => {
+    // Don't handle click if we're dragging
+    if (isDragging) return;
+    
     console.log('Card clicked:', card);
     if (!card || !card.rank || !card.suit) {
       console.error('Invalid card clicked:', card);
@@ -1064,6 +1225,82 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
       }
     });
   };
+  
+  const handleCardDragStart = (index: number, e: React.MouseEvent | React.TouchEvent) => {
+    if (!isMyTurn && gameStarted) return;
+    e.preventDefault();
+    setIsDragging(true);
+    setDragStartIndex(index);
+    setDragEndIndex(index);
+  };
+  
+  const handleCardDragMove = (e: MouseEvent | TouchEvent) => {
+    if (!isDragging || dragStartIndex === null) return;
+    
+    const clientX = 'touches' in e ? e.touches[0]?.clientX : e.clientX;
+    if (clientX === undefined) return;
+    
+    // Find which card is under the cursor
+    const cards = document.querySelectorAll('[data-card-index]');
+    let targetIndex = dragStartIndex;
+    
+    cards.forEach((cardEl) => {
+      const rect = cardEl.getBoundingClientRect();
+      if (clientX >= rect.left && clientX <= rect.right) {
+        const index = parseInt(cardEl.getAttribute('data-card-index') || '0');
+        targetIndex = index;
+      }
+    });
+    
+    setDragEndIndex(targetIndex);
+    
+    // Calculate range
+    const start = Math.min(dragStartIndex, targetIndex);
+    const end = Math.max(dragStartIndex, targetIndex);
+    const rangeCards = playerHand.slice(start, end + 1);
+    setDragRangeCards(rangeCards);
+    
+    // Find best hand from range
+    if (rangeCards.length > 0) {
+      const bestHand = findBestHand(rangeCards);
+      if (bestHand.length > 0) {
+        setSelectedCards(bestHand);
+      }
+    }
+  };
+  
+  const handleCardDragEnd = () => {
+    if (isDragging && dragRangeCards.length > 0) {
+      const bestHand = findBestHand(dragRangeCards);
+      if (bestHand.length > 0) {
+        setSelectedCards(bestHand);
+      }
+    }
+    setIsDragging(false);
+    setDragStartIndex(null);
+    setDragEndIndex(null);
+    setDragRangeCards([]);
+  };
+  
+  // Add global mouse/touch listeners for drag
+  useEffect(() => {
+    if (isDragging) {
+      const handleMove = (e: MouseEvent | TouchEvent) => handleCardDragMove(e);
+      const handleEnd = () => handleCardDragEnd();
+      
+      window.addEventListener('mousemove', handleMove);
+      window.addEventListener('mouseup', handleEnd);
+      window.addEventListener('touchmove', handleMove);
+      window.addEventListener('touchend', handleEnd);
+      
+      return () => {
+        window.removeEventListener('mousemove', handleMove);
+        window.removeEventListener('mouseup', handleEnd);
+        window.removeEventListener('touchmove', handleMove);
+        window.removeEventListener('touchend', handleEnd);
+      };
+    }
+  }, [isDragging, dragStartIndex, playerHand]);
 
   const handleClearSelection = () => {
     setSelectedCards([]);
@@ -1507,82 +1744,83 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
       </AnimatePresence>
 
       {/* Professional Poker Table Background */}
-      <div className="absolute inset-0 bg-gradient-to-br from-gray-900 via-gray-800 to-black">
-        {/* Subtle ambient lighting */}
-        <motion.div
-          className="absolute inset-0 pointer-events-none"
-          animate={{
-            opacity: [0.3, 0.5, 0.3],
-          }}
-          transition={{ duration: 6, repeat: Infinity }}
-          style={{
-            background: 'radial-gradient(ellipse at 50% 50%, rgba(59, 130, 246, 0.1) 0%, transparent 70%)',
-          }}
-        />
-      </div>
-      
-      {/* Professional Poker Table Surface with Wide Black Border */}
-      <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-        {/* Outer black border - wide and prominent */}
-        <div 
-          className="w-[92%] h-[82%] rounded-full absolute"
-          style={{
-            background: '#000000',
-            boxShadow: '0 0 0 20px #000000, 0 0 0 24px rgba(0, 0, 0, 0.8), 0 20px 80px rgba(0, 0, 0, 0.8), inset 0 0 0 2px rgba(255, 255, 255, 0.1)',
-          }}
-        />
-        
-        {/* Main table surface - dull blue felt */}
-        <motion.div 
-          className="w-[90%] h-[80%] rounded-full relative overflow-hidden"
-          style={{
-            background: 'radial-gradient(circle at 30% 30%, #4a6fa5 0%, #3d5a80 25%, #2d4a6b 50%, #1e3a5f 75%, #0f2a4a 100%)',
-            boxShadow: 'inset 0 0 120px rgba(0, 0, 0, 0.4), inset 0 0 60px rgba(0, 0, 0, 0.2), 0 0 0 20px #000000',
-          }}
-        >
-          {/* Realistic felt texture overlay */}
-          <div
-            className="absolute inset-0 opacity-40"
-            style={{
-              backgroundImage: `
-                repeating-linear-gradient(0deg, transparent, transparent 1px, rgba(0,0,0,0.05) 1px, rgba(0,0,0,0.05) 2px),
-                repeating-linear-gradient(90deg, transparent, transparent 1px, rgba(0,0,0,0.05) 1px, rgba(0,0,0,0.05) 2px),
-                repeating-linear-gradient(45deg, transparent, transparent 2px, rgba(255,255,255,0.02) 2px, rgba(255,255,255,0.02) 4px),
-                radial-gradient(circle at 25% 25%, rgba(100, 150, 200, 0.15) 0%, transparent 40%),
-                radial-gradient(circle at 75% 75%, rgba(80, 130, 180, 0.15) 0%, transparent 40%)
-              `,
-              backgroundSize: '100% 100%, 100% 100%, 200% 200%, 150% 150%, 150% 150%',
-            }}
-          />
-          
-          {/* Subtle light reflection on felt */}
-          <motion.div
-            className="absolute inset-0 pointer-events-none"
-            animate={{
-              background: [
-                'radial-gradient(circle at 30% 30%, rgba(150, 200, 255, 0.08) 0%, transparent 50%)',
-                'radial-gradient(circle at 70% 70%, rgba(150, 200, 255, 0.08) 0%, transparent 50%)',
-                'radial-gradient(circle at 30% 30%, rgba(150, 200, 255, 0.08) 0%, transparent 50%)',
-              ],
-            }}
-            transition={{ duration: 10, repeat: Infinity }}
-          />
-          
-          {/* Inner rim highlight */}
-          <div 
-            className="absolute inset-2 rounded-full pointer-events-none"
-            style={{
-              boxShadow: 'inset 0 0 40px rgba(0, 0, 0, 0.3), inset 0 0 0 1px rgba(255, 255, 255, 0.05)',
-            }}
-          />
-          
-          {/* Center dealer area - subtle */}
-          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-40 h-40 rounded-full opacity-5" style={{
-            background: 'radial-gradient(circle, rgba(255, 255, 255, 0.2) 0%, transparent 70%)',
-            boxShadow: 'inset 0 0 60px rgba(0, 0, 0, 0.3)',
-          }} />
-        </motion.div>
-      </div>
+      {(() => {
+        const styleConfig = getTableStyleConfig(tableStyle);
+        return (
+          <>
+            <div className="absolute inset-0 bg-gradient-to-br from-gray-900 via-gray-800 to-black">
+              {/* Subtle ambient lighting */}
+              <motion.div
+                className="absolute inset-0 pointer-events-none"
+                animate={{
+                  opacity: [0.3, 0.5, 0.3],
+                }}
+                transition={{ duration: 6, repeat: Infinity }}
+                style={{
+                  background: `radial-gradient(ellipse at 50% 50%, ${styleConfig.ambientLight} 0%, transparent 70%)`,
+                }}
+              />
+            </div>
+            
+            {/* Professional Poker Table Surface with Wide Black Border */}
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+              {/* Outer black border - wide and prominent */}
+              <div 
+                className="w-[92%] h-[82%] rounded-full absolute"
+                style={{
+                  background: '#000000',
+                  boxShadow: '0 0 0 20px #000000, 0 0 0 24px rgba(0, 0, 0, 0.8), 0 20px 80px rgba(0, 0, 0, 0.8), inset 0 0 0 2px rgba(255, 255, 255, 0.1)',
+                }}
+              />
+              
+              {/* Main table surface - dynamic style */}
+              <motion.div 
+                className="w-[90%] h-[80%] rounded-full relative overflow-hidden"
+                style={{
+                  background: styleConfig.background,
+                  boxShadow: 'inset 0 0 120px rgba(0, 0, 0, 0.4), inset 0 0 60px rgba(0, 0, 0, 0.2), 0 0 0 20px #000000',
+                }}
+                key={tableStyle}
+                initial={{ opacity: 0.8 }}
+                animate={{ opacity: 1 }}
+                transition={{ duration: 0.5 }}
+              >
+                {/* Realistic felt texture overlay */}
+                <div
+                  className="absolute inset-0 opacity-40"
+                  style={{
+                    backgroundImage: styleConfig.textureOverlay,
+                    backgroundSize: '100% 100%, 100% 100%, 200% 200%, 150% 150%, 150% 150%',
+                  }}
+                />
+                
+                {/* Subtle light reflection on felt */}
+                <motion.div
+                  className="absolute inset-0 pointer-events-none"
+                  animate={{
+                    background: styleConfig.lightReflection,
+                  }}
+                  transition={{ duration: 10, repeat: Infinity }}
+                />
+                
+                {/* Inner rim highlight */}
+                <div 
+                  className="absolute inset-2 rounded-full pointer-events-none"
+                  style={{
+                    boxShadow: 'inset 0 0 40px rgba(0, 0, 0, 0.3), inset 0 0 0 1px rgba(255, 255, 255, 0.05)',
+                  }}
+                />
+                
+                {/* Center dealer area - subtle */}
+                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-40 h-40 rounded-full opacity-5" style={{
+                  background: 'radial-gradient(circle, rgba(255, 255, 255, 0.2) 0%, transparent 70%)',
+                  boxShadow: 'inset 0 0 60px rgba(0, 0, 0, 0.3)',
+                }} />
+              </motion.div>
+            </div>
+          </>
+        );
+      })()}
 
       {/* Players */}
       {gameStarted && seatedPlayers.length > 0 && (
@@ -2160,12 +2398,16 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
                     filter: 'blur(20px)',
                   }}
                 />
-                <div className="flex justify-center overflow-x-auto overflow-y-visible px-1 sm:px-2 md:px-4 pt-16 sm:pt-20 pb-4 sm:pb-6 relative z-10" style={{ minHeight: '240px', WebkitOverflowScrolling: 'touch' }}>
-                <div className="relative flex min-w-max">
+                <div className="flex justify-center overflow-x-auto overflow-y-visible px-1 sm:px-2 md:px-4 pt-16 sm:pt-20 pb-4 sm:pb-6 relative z-10" style={{ minHeight: '240px', WebkitOverflowScrolling: 'touch', maxWidth: '100vw' }}>
+                <div className="relative flex min-w-max" style={{ maxWidth: 'calc(100vw - 2rem)' }}>
                   {playerHand.map((card, idx) => {
                     const isSelected = selectedCards.some(
                       (c) => c.rank === card.rank && c.suit === card.suit
                     );
+                    const isInDragRange = isDragging && dragStartIndex !== null && dragEndIndex !== null &&
+                      idx >= Math.min(dragStartIndex, dragEndIndex) && idx <= Math.max(dragStartIndex, dragEndIndex);
+                    const isBestInRange = isInDragRange && dragRangeCards.length > 0 && 
+                      selectedCards.some(c => c.rank === card.rank && c.suit === card.suit);
                     return (
                       <motion.div
                         key={`${card.rank}-${card.suit}-${idx}`}
@@ -2176,6 +2418,7 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
                           filter: isSelected 
                             ? 'drop-shadow(0 0 20px rgba(46, 213, 115, 0.8)) drop-shadow(0 8px 16px rgba(0, 0, 0, 0.4))'
                             : 'drop-shadow(0 4px 8px rgba(0, 0, 0, 0.3))',
+                          opacity: isInDragRange && !isBestInRange ? 0.4 : 1,
                         }}
                         initial={{ 
                           opacity: 0, 
@@ -2186,7 +2429,7 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
                           x: (idx - playerHand.length / 2) * 20,
                         }}
                         animate={{ 
-                          opacity: 1, 
+                          opacity: isInDragRange && !isBestInRange ? 0.4 : 1, 
                           y: 0, 
                           rotateY: 0,
                           rotateZ: 0,
@@ -2200,7 +2443,7 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
                           damping: 25,
                           mass: 0.6,
                         }}
-                        whileHover={!isSelected ? {
+                        whileHover={!isSelected && !isDragging ? {
                           y: -15,
                           scale: 1.12,
                           rotateZ: 0,
@@ -2213,10 +2456,15 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
                           y: -10,
                           scale: 1.08,
                         }}
+                        onMouseDown={(e) => handleCardDragStart(idx, e)}
+                        onTouchStart={(e) => handleCardDragStart(idx, e)}
+                        data-card-index={idx}
                       >
                         <CardComponent
                           card={card}
                           isSelected={isSelected}
+                          isInSelectionRange={isInDragRange}
+                          isStrongestInRange={isBestInRange}
                           onClick={() => handleCardClick(card)}
                         />
                       </motion.div>
@@ -2873,14 +3121,23 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
           }
           router.back();
         }}
-        className="absolute top-4 left-4 w-12 h-12 bg-[#FF4757] rounded-full flex items-center justify-center text-white hover:bg-red-700 transition shadow-lg"
+        className="absolute top-4 left-4 w-12 h-12 bg-[#FF4757] rounded-full flex items-center justify-center text-white hover:bg-red-700 transition shadow-lg z-50"
       >
         ←
+      </button>
+      
+      {/* Settings Button - Always visible */}
+      <button 
+        onClick={() => setShowSettingsPanel(!showSettingsPanel)}
+        className="absolute top-4 left-20 w-12 h-12 bg-gradient-to-br from-[#1e3a5f] to-[#0f2a4a] rounded-full flex items-center justify-center text-white hover:from-[#3B82F6] hover:to-[#2563eb] transition shadow-lg border-2 border-[#3B82F6]/50 z-50"
+        title="Тохиргоо"
+      >
+        <FaCog className="w-5 h-5" />
       </button>
 
       {/* Top Right Buttons - Only show during game */}
       {gameStarted && (
-        <div className="absolute top-4 right-4 flex gap-2">
+        <div className="absolute top-4 right-4 flex gap-2 z-50">
           <button 
             onClick={() => {
               setSortBySuit(!sortBySuit);
@@ -2905,6 +3162,188 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
             )}
           </button>
         </div>
+      )}
+      
+      {/* Settings Panel - Always visible */}
+      {showSettingsPanel && (
+        <>
+          {/* Backdrop */}
+          <div 
+            className="fixed inset-0 z-[198] bg-black/50 backdrop-blur-sm"
+            onClick={() => setShowSettingsPanel(false)}
+          />
+          
+          {/* Settings Panel */}
+          <motion.div
+            initial={{ scale: 0.9, opacity: 0, y: -20 }}
+            animate={{ scale: 1, opacity: 1, y: 0 }}
+            exit={{ scale: 0.9, opacity: 0, y: -20 }}
+            className="fixed top-20 left-4 sm:left-auto sm:right-4 z-[200] w-[90%] sm:w-80 bg-gradient-to-br from-[#1a1a2e] via-[#16213e] to-[#0f1419] border-2 border-[#3B82F6] rounded-2xl shadow-2xl p-6"
+          >
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-white text-xl font-bold font-orbitron flex items-center gap-2">
+                <FaCog className="w-5 h-5 text-[#3B82F6]" />
+                Тохиргоо
+              </h2>
+              <button
+                onClick={() => setShowSettingsPanel(false)}
+                className="text-white hover:text-[#FF4757] transition text-xl"
+              >
+                ✕
+              </button>
+            </div>
+            
+            {/* Table Style Selection */}
+            <div className="mb-6">
+              <h3 className="text-white/90 text-sm font-semibold mb-3 font-orbitron">Ширээний загвар</h3>
+              <div className="grid grid-cols-3 gap-3">
+                {/* Green Style */}
+                <motion.button
+                  onClick={() => setTableStyle('green')}
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.95 }}
+                  className={`relative h-20 rounded-xl overflow-hidden border-2 transition-all ${
+                    tableStyle === 'green'
+                      ? 'border-[#2ED573] shadow-lg shadow-[#2ED573]/50'
+                      : 'border-[#3B82F6]/30 hover:border-[#3B82F6]/60'
+                  }`}
+                  style={{
+                    background: 'radial-gradient(circle at 30% 30%, #2d5a3d 0%, #1e4a2d 25%, #0f3a1d 50%, #0a2a15 75%, #051a0d 100%)',
+                  }}
+                >
+                  {tableStyle === 'green' && (
+                    <motion.div
+                      initial={{ scale: 0 }}
+                      animate={{ scale: 1 }}
+                      className="absolute inset-0 flex items-center justify-center bg-[#2ED573]/20"
+                    >
+                      <span className="text-white text-2xl">✓</span>
+                    </motion.div>
+                  )}
+                  <div className="absolute bottom-1 left-1/2 -translate-x-1/2 text-white text-xs font-bold">
+                    Ногоон
+                  </div>
+                </motion.button>
+                
+                {/* Blue Style */}
+                <motion.button
+                  onClick={() => setTableStyle('blue')}
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.95 }}
+                  className={`relative h-20 rounded-xl overflow-hidden border-2 transition-all ${
+                    tableStyle === 'blue'
+                      ? 'border-[#3B82F6] shadow-lg shadow-[#3B82F6]/50'
+                      : 'border-[#3B82F6]/30 hover:border-[#3B82F6]/60'
+                  }`}
+                  style={{
+                    background: 'radial-gradient(circle at 30% 30%, #4a6fa5 0%, #3d5a80 25%, #2d4a6b 50%, #1e3a5f 75%, #0f2a4a 100%)',
+                  }}
+                >
+                  {tableStyle === 'blue' && (
+                    <motion.div
+                      initial={{ scale: 0 }}
+                      animate={{ scale: 1 }}
+                      className="absolute inset-0 flex items-center justify-center bg-[#3B82F6]/20"
+                    >
+                      <span className="text-white text-2xl">✓</span>
+                    </motion.div>
+                  )}
+                  <div className="absolute bottom-1 left-1/2 -translate-x-1/2 text-white text-xs font-bold">
+                    Цэнхэр
+                  </div>
+                </motion.button>
+                
+                {/* Black Style */}
+                <motion.button
+                  onClick={() => setTableStyle('black')}
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.95 }}
+                  className={`relative h-20 rounded-xl overflow-hidden border-2 transition-all ${
+                    tableStyle === 'black'
+                      ? 'border-[#FFFFFF] shadow-lg shadow-[#FFFFFF]/30'
+                      : 'border-[#3B82F6]/30 hover:border-[#3B82F6]/60'
+                  }`}
+                  style={{
+                    background: 'radial-gradient(circle at 30% 30%, #2a2a2a 0%, #1a1a1a 25%, #0f0f0f 50%, #080808 75%, #000000 100%)',
+                  }}
+                >
+                  {tableStyle === 'black' && (
+                    <motion.div
+                      initial={{ scale: 0 }}
+                      animate={{ scale: 1 }}
+                      className="absolute inset-0 flex items-center justify-center bg-[#FFFFFF]/10"
+                    >
+                      <span className="text-white text-2xl">✓</span>
+                    </motion.div>
+                  )}
+                  <div className="absolute bottom-1 left-1/2 -translate-x-1/2 text-white text-xs font-bold">
+                    Хар
+                  </div>
+                </motion.button>
+              </div>
+            </div>
+            
+            {/* Additional Settings */}
+            <div className="border-t border-[#3B82F6]/30 pt-4 space-y-4">
+              {gameStarted && (
+                <div className="flex items-center justify-between">
+                  <span className="text-white/90 text-sm font-orbitron">Картын эрэмбэлэлт</span>
+                  <button
+                    onClick={() => {
+                      setSortBySuit(!sortBySuit);
+                      setPlayerHand((prev) => {
+                        return sortBySuit ? sortCardsByRank(prev) : sortCardsBySuit(prev);
+                      });
+                    }}
+                    className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all ${
+                      sortBySuit
+                        ? 'bg-[#00C896] text-white'
+                        : 'bg-[#3B82F6]/20 text-[#3B82F6] border border-[#3B82F6]/50'
+                    }`}
+                  >
+                    {sortBySuit ? 'Дүрсээр' : 'Зэрэглэлээр'}
+                  </button>
+                </div>
+              )}
+              
+              {/* Table Style Preview */}
+              <div>
+                <h3 className="text-white/90 text-sm font-semibold mb-2 font-orbitron">Одоогийн загвар</h3>
+                <div className="relative h-16 rounded-lg overflow-hidden border border-[#3B82F6]/30">
+                  <div 
+                    className="absolute inset-0"
+                    style={{
+                      background: getTableStyleConfig(tableStyle).background,
+                    }}
+                  />
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <span className="text-white text-xs font-bold font-orbitron drop-shadow-lg">
+                      {tableStyle === 'green' ? '🟢 Ногоон' : tableStyle === 'blue' ? '🔵 Цэнхэр' : '⚫ Хар'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+              
+              {/* Game Info */}
+              {gameStarted && (
+                <div className="border-t border-[#3B82F6]/30 pt-4">
+                  <div className="text-white/70 text-xs space-y-1">
+                    <div className="flex justify-between">
+                      <span>Тоглогчид:</span>
+                      <span className="font-semibold">{seatedPlayers.length}/4</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Холболт:</span>
+                      <span className={`font-semibold ${isConnected ? 'text-[#2ED573]' : 'text-[#FF4757]'}`}>
+                        {isConnected ? '✓ Холбогдсон' : '✗ Холбогдоогүй'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </motion.div>
+        </>
       )}
 
       {/* Round Score Modal */}

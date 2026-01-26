@@ -250,6 +250,14 @@ function handleUserAdminMessage(msg, ws, player, rooms) {
       
       // Return true to prevent game handler from processing this
       return true;
+    } else {
+      // Send error if userId is missing
+      ws.send(JSON.stringify({ 
+        type: "error", 
+        message: "userId is required to join admin chat room" 
+      }));
+      console.log(`❌ Failed to join admin_chat_room: userId is missing`);
+      return true; // Still return true to prevent game handler from processing
     }
   }
 

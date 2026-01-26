@@ -455,6 +455,19 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
       ws.send({ type: 'getSeatedPlayers' });
     });
 
+    ws.on('playerReconnected', (data: any) => {
+      console.log('Player reconnected:', data);
+      // Remove player from disconnected set when they reconnect
+      if (data.player) {
+        setDisconnectedPlayers(prev => {
+          const newSet = new Set(prev);
+          newSet.delete(data.player);
+          return newSet;
+        });
+        console.log(`✅ Player ${data.player} reconnected - removed from disconnected set`);
+      }
+    });
+
     ws.on('playerReadyStatus', (data: any) => {
       console.log('Received playerReadyStatus:', data);
       const status = data.status || data || {};
@@ -2312,48 +2325,58 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
           )}
           {/* Cards with professional poker spread animation */}
           <motion.div 
-            className="flex gap-3 items-center justify-center"
+            className={`flex items-center justify-center w-full px-2 sm:px-0 ${
+              lastPlay.cards.length >= 5 ? 'gap-0.5 sm:gap-3' : 'gap-1 sm:gap-3'
+            }`}
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             transition={{ delay: 0.2 }}
           >
-            {lastPlay.cards.map((card, idx) => (
-              <motion.div
-                key={`center-${card.rank}-${card.suit}-${idx}`}
-                initial={{ 
-                  opacity: 0, 
-                  scale: 0.3, 
-                  rotateY: -180,
-                  y: -50,
-                  x: idx % 2 === 0 ? -30 : 30,
-                }}
-                animate={{ 
-                  opacity: 1, 
-                  scale: 1, 
-                  rotateY: 0,
-                  y: 0,
-                  x: 0,
-                }}
-                transition={{ 
-                  delay: idx * 0.08,
-                  type: "spring",
-                  stiffness: 300,
-                  damping: 25,
-                  mass: 0.7,
-                }}
-                whileHover={{ 
-                  scale: 1.15, 
-                  y: -10,
-                  z: 30,
-                  transition: { duration: 0.2 }
-                }}
-                style={{
-                  filter: 'drop-shadow(0 8px 16px rgba(0, 0, 0, 0.4))',
-                }}
-              >
-                <CardComponent card={card} />
-              </motion.div>
-            ))}
+            {lastPlay.cards.map((card, idx) => {
+              // Scale down cards on mobile when there are 5 cards to ensure they fit and are centered
+              const isMobile = !isDesktop;
+              const shouldScale = lastPlay.cards.length >= 5 && isMobile;
+              const cardScale = shouldScale ? 0.6 : 1;
+              
+              return (
+                <motion.div
+                  key={`center-${card.rank}-${card.suit}-${idx}`}
+                  className="flex-shrink-0"
+                  initial={{ 
+                    opacity: 0, 
+                    scale: 0.3, 
+                    rotateY: -180,
+                    y: -50,
+                    x: idx % 2 === 0 ? -30 : 30,
+                  }}
+                  animate={{ 
+                    opacity: 1, 
+                    scale: cardScale, 
+                    rotateY: 0,
+                    y: 0,
+                    x: 0,
+                  }}
+                  transition={{ 
+                    delay: idx * 0.08,
+                    type: "spring",
+                    stiffness: 300,
+                    damping: 25,
+                    mass: 0.7,
+                  }}
+                  whileHover={{ 
+                    scale: shouldScale ? cardScale * 1.15 : 1.15, 
+                    y: -10,
+                    z: 30,
+                    transition: { duration: 0.2 }
+                  }}
+                  style={{
+                    filter: 'drop-shadow(0 8px 16px rgba(0, 0, 0, 0.4))',
+                  }}
+                >
+                  <CardComponent card={card} />
+                </motion.div>
+              );
+            })}
           </motion.div>
         </motion.div>
       )}

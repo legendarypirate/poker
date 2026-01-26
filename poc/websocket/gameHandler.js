@@ -877,6 +877,13 @@ async function handleJoinRoom(msg, ws, rooms, roomReadyStatus, broadcastToRoom, 
         );
       }
 
+      // Broadcast to other players that this player has reconnected
+      broadcastToRoom(roomId, {
+        type: "playerReconnected",
+        player: player.playerId,
+        username: player.username,
+      }, rooms);
+
       console.log(`🔄 Player ${player.playerId} reconnected to room ${roomId} (${username})`);
       return { player, roomId };
     } else {

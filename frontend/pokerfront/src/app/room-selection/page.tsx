@@ -1,11 +1,11 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { userStorage } from '@/lib/storage';
 import RoomSelectionScreen from '@/components/RoomSelectionScreen';
 
-export default function RoomSelectionPage() {
+function RoomSelectionContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const buyIn = searchParams.get('buyIn') || '20k';
@@ -32,5 +32,22 @@ export default function RoomSelectionPage() {
   }
 
   return <RoomSelectionScreen buyIn={buyIn} />;
+}
+
+export default function RoomSelectionPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex items-center justify-center min-h-screen bg-[#0F1923]">
+          <div className="text-center">
+            <div className="w-12 h-12 border-4 border-[#00C896] border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+            <p className="text-[#00C896] font-orbitron text-sm">Ачаалж байна...</p>
+          </div>
+        </div>
+      }
+    >
+      <RoomSelectionContent />
+    </Suspense>
+  );
 }
 

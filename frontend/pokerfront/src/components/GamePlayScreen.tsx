@@ -1875,7 +1875,9 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
               } else {
                 avatarUrl = '';
               }
-              const displayName = player.displayName || player.username || `Player ${playerId}`;
+              const displayName = (typeof player.displayName === 'string' ? player.displayName : null) 
+                || (typeof player.username === 'string' ? player.username : null) 
+                || `Player ${playerId}`;
               const playerUserId = player.userId || player.user_id || null;
               const pokerAvatar = getPokerAvatar(playerUserId, avatarUrl, displayName);
               const avatarGradient = getAvatarGradient(playerUserId);
@@ -2766,7 +2768,9 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
               const actualPlayerId = displayPlayer?.playerId || seatId;
               const position = getRelativePosition(actualPlayerId);
               const playerColor = isMe ? '#3B82F6' : '#9C27B0';
-            const displayName = displayPlayer?.username || displayPlayer?.displayName || (isMe ? (myDisplayName || myUsername || 'Та') : `Player ${seatId}`);
+            const displayName = (typeof displayPlayer?.username === 'string' ? displayPlayer.username : null)
+              || (typeof displayPlayer?.displayName === 'string' ? displayPlayer.displayName : null)
+              || (isMe ? (typeof myDisplayName === 'string' ? myDisplayName : (typeof myUsername === 'string' ? myUsername : 'Та')) : `Player ${seatId}`);
             // Get avatar URL - check multiple possible fields and ensure it's a valid URL
             let avatarUrl = displayPlayer?.avatar_url || displayPlayer?.avatarUrl || '';
             // Clean up avatar URL - remove any whitespace and validate
@@ -2781,7 +2785,9 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
               avatarUrl = '';
             }
             const playerUserId = displayPlayer?.userId || displayPlayer?.user_id || (isMe ? myUserId : null);
-            const displayNameForAvatar = displayPlayer?.displayName || displayPlayer?.username || `Player ${seatId}`;
+            const displayNameForAvatar = (typeof displayPlayer?.displayName === 'string' ? displayPlayer.displayName : null)
+              || (typeof displayPlayer?.username === 'string' ? displayPlayer.username : null)
+              || `Player ${seatId}`;
             const pokerAvatar = getPokerAvatar(playerUserId, avatarUrl, displayNameForAvatar);
             const avatarGradient = getAvatarGradient(playerUserId);
             const formattedUserId = formatUserId(playerUserId);

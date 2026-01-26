@@ -21,7 +21,7 @@ export function getGmailAvatar(email: string | null | undefined): string | null 
  * Get the first letter of a name for avatar display
  */
 export function getInitialLetter(name: string | null | undefined): string {
-  if (!name || name.trim() === '') {
+  if (!name || typeof name !== 'string' || name.trim() === '') {
     return '?';
   }
   return name.trim().charAt(0).toUpperCase();

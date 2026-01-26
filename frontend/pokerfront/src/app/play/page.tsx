@@ -1,11 +1,11 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { userStorage } from '@/lib/storage';
 import GamePlayScreen from '@/components/GamePlayScreen';
 
-export default function PlayPage() {
+function PlayPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const roomId = searchParams.get('roomId') || '';
@@ -32,5 +32,22 @@ export default function PlayPage() {
   }
 
   return <GamePlayScreen roomId={roomId} />;
+}
+
+export default function PlayPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex items-center justify-center min-h-screen bg-[#0F1923]">
+          <div className="text-center">
+            <div className="w-12 h-12 border-4 border-[#00C896] border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+            <p className="text-[#00C896] font-orbitron text-sm">Тоглоом ачаалж байна...</p>
+          </div>
+        </div>
+      }
+    >
+      <PlayPageContent />
+    </Suspense>
+  );
 }
 

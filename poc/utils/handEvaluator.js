@@ -317,12 +317,42 @@ function canPlayCards(playedCards, lastPlay) {
     return canBeat;
   }
   
-  // If values are the same and both are straights, compare by highest suit
+  // If values are the same and both are straights, compare by suit of the highest card
   if (playedHand.rank === 'Straight' && lastHand.rank === 'Straight') {
-    const lastMaxSuit = Math.max(...lastHand.cards.map(c => suitOrder[c.suit] || 0));
-    const playedMaxSuit = Math.max(...playedCards.map(c => suitOrder[c.suit] || 0));
-    const canBeat = playedMaxSuit > lastMaxSuit;
-    console.log(`🔍 Same straight value, comparing suits: Played max suit=${playedMaxSuit} vs Last max suit=${lastMaxSuit}, canBeat=${canBeat}`);
+    // Get the highest card from each straight (the card that determines the straight value)
+    const getHighestCardInStraight = (cards) => {
+      const sortedCards = [...cards].sort((a, b) => cardValue(a.rank) - cardValue(b.rank));
+      const ranks = sortedCards.map(c => c.rank);
+      
+      // Check for A-2-3-4-5 (wheel - highest card is 5)
+      if (ranks.includes('A') && ranks.includes('2') && ranks.includes('3') && 
+          ranks.includes('4') && ranks.includes('5') && !ranks.includes('6')) {
+        return sortedCards.find(c => c.rank === '5');
+      }
+      // Check for 10-J-Q-K-A (highest card is A)
+      else if (ranks.includes('10') && ranks.includes('J') && ranks.includes('Q') && 
+               ranks.includes('K') && ranks.includes('A') && !ranks.includes('2')) {
+        return sortedCards.find(c => c.rank === 'A');
+      }
+      // For straights containing '2', find the highest non-2 card
+      else if (ranks.includes('2')) {
+        const nonTwoCards = sortedCards.filter(c => c.rank !== '2');
+        return nonTwoCards[nonTwoCards.length - 1];
+      }
+      // For other straights, the highest card is the last one after sorting
+      else {
+        return sortedCards[4];
+      }
+    };
+    
+    const lastHighestCard = getHighestCardInStraight(lastHand.cards);
+    const playedHighestCard = getHighestCardInStraight(playedCards);
+    
+    const lastHighestSuit = suitOrder[lastHighestCard.suit] || 0;
+    const playedHighestSuit = suitOrder[playedHighestCard.suit] || 0;
+    
+    const canBeat = playedHighestSuit > lastHighestSuit;
+    console.log(`🔍 Same straight value, comparing highest card suits: Played ${playedHighestCard.rank}${playedHighestCard.suit} (${playedHighestSuit}) vs Last ${lastHighestCard.rank}${lastHighestCard.suit} (${lastHighestSuit}), canBeat=${canBeat}`);
     return canBeat;
   }
   

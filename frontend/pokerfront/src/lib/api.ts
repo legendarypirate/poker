@@ -66,9 +66,10 @@ api.interceptors.response.use(
       }
       
       // Return a more user-friendly error
+      const errorData = error.response?.data as { message?: string } | undefined;
       return Promise.reject({
         ...error,
-        message: error.response?.data?.message || 'Authentication failed. Please log in again.',
+        message: errorData?.message || 'Authentication failed. Please log in again.',
         isAuthError: true,
       });
     }

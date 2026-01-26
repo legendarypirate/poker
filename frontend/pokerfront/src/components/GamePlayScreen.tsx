@@ -2272,7 +2272,7 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
       {/* Last Play Cards - Professional Center Display */}
       {gameStarted && lastPlay && lastPlay.cards && lastPlay.cards.length > 0 && (
         <motion.div 
-          className="absolute top-1/4 left-1/2 -translate-x-1/2 z-30 flex flex-col items-center gap-4"
+          className="absolute top-1/4 left-0 right-0 z-30 flex flex-col items-center gap-4 w-full"
           initial={{ opacity: 0, scale: 0.6, y: -30 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}
           transition={{ 
@@ -2325,7 +2325,7 @@ export default function GamePlayScreen({ roomId }: GamePlayScreenProps) {
           )}
           {/* Cards with professional poker spread animation */}
           <motion.div 
-            className={`flex items-center justify-center w-full px-2 sm:px-0 ${
+            className={`flex items-center justify-center w-full max-w-full px-2 sm:px-0 ${
               lastPlay.cards.length >= 5 ? 'gap-0.5 sm:gap-3' : 'gap-1 sm:gap-3'
             }`}
             initial={{ opacity: 0 }}
